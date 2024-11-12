@@ -24,7 +24,9 @@ INSTANCE_TYPE="${INSTANCE_TYPE:-p5.48xlarge}"
 AWS_REGION="${AWS_REGION:-us-west-1}"
 INSTANCE_COUNT="${INSTANCE_COUNT:-1}"
 CONTROLLER_INSTANCE_TYPE="${CONTROLLER_INSTANCE_TYPE:-m5.xlarge}"
+LOGIN_GROUP_INSTANCE_TYPE="${LOGIN_GROUP_INSTANCE_TYPE:-m5.xlarge}"
 EBS_VOLUME_SIZE="100"
+LOGIN_GROUP_EBS_VOLUME_SIZE="100"
 
 cd LifecycleScripts
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -38,6 +40,7 @@ cat > base-config/provisioning_parameters.json << EOL
   "version": "1.0.0",
   "workload_manager": "slurm",
   "controller_group": "controller-machine",
+  "login_group": "login-group",
   "worker_groups": [
     {
       "instance_group_name": "worker-group-1",
@@ -63,6 +66,24 @@ cat > cluster-config.json << EOL
           {
             "EbsVolumeConfig": {
               "VolumeSizeInGB": ${EBS_VOLUME_SIZE}
+            }
+          }
+        ],
+        "InstanceCount": 1,
+        "LifeCycleConfig": {
+          "SourceS3Uri": "s3://${BUCKET}/src",
+          "OnCreate": "on_create.sh"
+        },
+        "ExecutionRole": "${ROLE}",
+        "ThreadsPerCore": 1
+      },
+      {
+        "InstanceGroupName": "login-group",
+        "InstanceType": "ml.${LOGIN_GROUP_INSTANCE_TYPE}",
+        "InstanceStorageConfigs": [
+          {
+            "EbsVolumeConfig": {
+              "VolumeSizeInGB": ${LOGIN_GROUP_EBS_VOLUME_SIZE}
             }
           }
         ],
