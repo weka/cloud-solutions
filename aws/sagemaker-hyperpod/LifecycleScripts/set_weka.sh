@@ -2,16 +2,10 @@
 
 set -ex
 
-NODE_TYPE="$1"
 backend_ip='<place holder>'
 
 TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 INSTANCE_TYPE=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/instance-type)
-
-if [[ "$NODE_TYPE" == "controller" ]]; then
-    echo "This is a controller node, skipping weka setup."
-    exit 0
-fi
 
 # add additional interfaces and cores based on the instance type
 if [[ "$INSTANCE_TYPE" == "p5.48xlarge" ]]; then

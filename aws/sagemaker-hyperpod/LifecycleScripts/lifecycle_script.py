@@ -217,7 +217,7 @@ def main(args):
             ExecuteBashScript("./utils/slurm_fix_plugstackconf.sh").run()
             ExecuteBashScript("./utils/pam_adopt_cgroup_wheel.sh").run()
 
-        ExecuteBashScript("./set_weka.sh").run(node_type)
+        ExecuteBashScript("./set_weka.sh").run()
 
     print("[INFO]: Success: All provisioning scripts completed")
 
