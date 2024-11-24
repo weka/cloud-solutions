@@ -1,8 +1,17 @@
 # Cloud Solutions
 
 ## SageMaker HyperPod
+The SageMaker HyperPod files here are copied from AWS [SageMaker HyperPod samples](https://github.com/aws-samples/awsome-distributed-training/tree/main/1.architectures/5.sagemaker-hyperpod)
+<br>The unique files are:
+- `set_weka.sh`: will set weka on the SageMaker HyperPod cluster nodes setup
+- `set_env_vars.sh`: will set the required env vars for examples.sh
+- `examples.sh`: will create the SageMaker HyperPod cluster with weka installed
+
+The idea here is to have a simple example to create a SageMaker HyperPod cluster with WEKA installed, while our expectation
+is, that WEKA customers will integrate `set_weka.sh` into their own SageMaker HyperPod cluster setup.
+
 ### Pre-requisites
-Can use AWS official CF to generate the requires resources: https://catalog.workshops.aws/sagemaker-hyperpod/en-US/00-setup/02-own-account
+Can use AWS official [CF](https://catalog.workshops.aws/sagemaker-hyperpod/en-US/00-setup/02-own-account) to generate the required resources:
 - Fsx
 - VPC
 - Subnet
@@ -14,8 +23,7 @@ Can use AWS official CF to generate the requires resources: https://catalog.work
 - set the required aws profile
 - update the parameters in the examples.sh
 - run `cd aws/sagemaker-hyperpod`
-- run `./set_env_vars.sh <stack_name>`
-- run `source env_vars`
+- run `./set_env_vars.sh <stack_name> && source env_vars` if the pre-requisites are created using the CF above
 - run `./examples.sh <backend ip> <SageMaker cluster_name>`
 <br>The example will run by default with:
   - INSTANCE_TYPE=`p5.48xlarge`, for other instance type, set the INSTANCE_TYPE env var
