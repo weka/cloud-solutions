@@ -69,4 +69,11 @@ else
     exit 1
 fi
 
-
+export AWS_REGION=$(aws configure list | grep region | awk '{print $2}')
+if [[ -n $AWS_REGION ]]; then
+    echo "export AWS_REGION=${AWS_REGION}" >> env_vars
+    echo "[INFO] AWS_REGION = ${AWS_REGION}"
+else
+    echo "[ERROR] failed to retrieve region Name"
+    exit 1
+fi
