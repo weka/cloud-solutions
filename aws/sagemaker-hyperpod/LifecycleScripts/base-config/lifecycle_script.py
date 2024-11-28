@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
 
+from utils.weka_slurm import modify_config_file
 
 SLURM_CONF = os.getenv("SLURM_CONF", "/opt/slurm/etc/slurm.conf")
 
@@ -176,6 +177,18 @@ def main(args):
         if node_type == SlurmNodeType.HEAD_NODE:
             ExecuteBashScript("./setup_mariadb_accounting.sh").run()
 
+            # Enable Slurm config changes for WEKA
+            if Config.enable_weka:
+                 try:
+                    modify_config_file(
+                        config_file=SLURM_CONF,
+                        cpu_reserve_count=8,
+                        memory_reduction_gb=5,
+                        min_memory_gb=10
+                    )
+                 except Exception as e:
+                     print(f"Slurm config modification failed: {e}")
+
         ExecuteBashScript("./apply_hotfix.sh").run(node_type)
         ExecuteBashScript("./utils/motd.sh").run(node_type)
         ExecuteBashScript("./utils/fsx_ubuntu.sh").run()
@@ -217,7 +230,8 @@ def main(args):
             ExecuteBashScript("./utils/slurm_fix_plugstackconf.sh").run()
             ExecuteBashScript("./utils/pam_adopt_cgroup_wheel.sh").run()
 
-        ExecuteBashScript("./set_weka.sh").run()
+        if Config.enable_weka:
+           ExecuteBashScript("./utils/set_weka.sh").run()
 
     print("[INFO]: Success: All provisioning scripts completed")
 
