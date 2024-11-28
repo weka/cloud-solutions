@@ -9,9 +9,11 @@ import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
+import shutil
 
 from config import Config
 
+from weka.utils import get_ips_to_core_ids_map, get_nics
 
 SLURM_CONF = os.getenv("SLURM_CONF", "/opt/slurm/etc/slurm.conf")
 
@@ -176,6 +178,15 @@ def main(args):
         if node_type == SlurmNodeType.HEAD_NODE:
             ExecuteBashScript("./setup_mariadb_accounting.sh").run()
 
+            # Enable Slurm config changes for WEKA
+            if Config.enable_weka:
+                # create /opt/weka_slurm_conf_update directory
+                os.makedirs("/opt/weka_slurm_conf_update/weka", exist_ok=True)
+                # copy python scripts to /opt/weka_slurm_conf_update
+                shutil.copy("weka/utils.py", "/opt/weka_slurm_conf_update/weka")
+                shutil.copy("weka/weka_slurm.py", "/opt/weka_slurm_conf_update")
+                ExecuteBashScript("./weka/update_slurm_conf.sh").run(SLURM_CONF)
+
         ExecuteBashScript("./apply_hotfix.sh").run(node_type)
         ExecuteBashScript("./utils/motd.sh").run(node_type)
         ExecuteBashScript("./utils/fsx_ubuntu.sh").run()
@@ -217,7 +228,11 @@ def main(args):
             ExecuteBashScript("./utils/slurm_fix_plugstackconf.sh").run()
             ExecuteBashScript("./utils/pam_adopt_cgroup_wheel.sh").run()
 
-        ExecuteBashScript("./set_weka.sh").run()
+        if Config.enable_weka:
+            nics = get_nics(group["InstanceType"])
+            cores = get_ips_to_core_ids_map()[instance["CustomerIpAddress"]]
+            print(f"NICs: {nics}, Cores: {cores}")
+            ExecuteBashScript("./weka/set_weka.sh").run(" ".join(nics), " ".join(cores))
 
     print("[INFO]: Success: All provisioning scripts completed")
 

@@ -27,6 +27,9 @@ class Config:
     # Set true to install quality-of-live improvements
     enable_initsmhp = False
 
+    # Set true to build and configure WEKA file system
+    enable_weka = True
+
 # Configuration parameters for ActiveDirectory/LDAP/SSSD
 class SssdConfig:
 
