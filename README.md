@@ -1,3 +1,5 @@
-# WEKA Cloud Solutions
-
-## [SageMaker HyperPod](aws/sagemaker-hyperpod/README.md)
+# WEKA Cloud Integrations
+## AWS
+- ### [SageMaker HyperPod](aws/sagemaker-hyperpod/README.md)
+## Azure
+- ### [CycleCloud](azure/cyclecloud/README.md)
