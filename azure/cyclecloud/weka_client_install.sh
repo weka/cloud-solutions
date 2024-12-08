@@ -98,4 +98,3 @@ retry 60 45 $mount_command
 rm -rf $INSTALLATION_PATH
 
 echo "$(date -u): wekafs mount complete"
-

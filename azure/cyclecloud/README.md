@@ -12,7 +12,7 @@
 ```bash
 git clone https://github.com/themorey/cyclecloud-weka.git
 ```
-- Import the template entitled “slurm-weka” 
+- Import the template entitled “slurm-weka”
 ```bash
 cyclecloud import_template -f /home/weka/cyclecloud-weka/templates/slurm-weka.txt
 ```
@@ -30,7 +30,7 @@ AcceleratedNetworking = true
 [[[network-interface eth1]]]
 SubnetId = $SubnetId
 ```
-- copy `weka_client_install.sh` script to vm. Depending on your configuration, you may create sperate Azure CycleCloud specs for each Node Array and have a cloud-init script for each array. 
+- copy `weka_client_install.sh` script to vm. Depending on your configuration, you may create sperate Azure CycleCloud specs for each Node Array and have a cloud-init script for each array.
 `~/specs/htc/cluster-init/scripts`
 
 ### CycleCloud GUI

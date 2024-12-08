@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: installer-init
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: installer
+  template:
+    metadata:
+      labels:
+        app: installer
+    spec:
+      hostPID: true
+      hostNetwork: true
+      restartPolicy: Always
+      nodeSelector:
+         agentpool: "{{ .Values.nodeSelector.agentpool }}"
+      containers:
+        - image: patnaikshekhar/node-installer:1.3
+          name: installer
+          env:
+            - name: MOUNT_POINT
+              value: "{{ .Values.weka.mount_point }}"
+            - name: FILESYSTEM_NAME
+              value: "{{ .Values.weka.filesystem_name }}"
+            - name: BACKEND_IP
+              value: "{{ .Values.weka.backend_ip }}"
+            - name: FRONTEND_CONTAINER_CORES_NUM
+              value: "{{ .Values.weka.frontend_container_cores_num }}"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: init-script
+              mountPath: /tmp
+            - name: host-mount
+              mountPath: /host
+      volumes:
+        - name: init-script
+          configMap:
+            name: installer-config
+            defaultMode: 0777
+        - name: host-mount
+          hostPath:
+            path: /tmp/install

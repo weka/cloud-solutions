@@ -1,0 +1,5 @@
+apiVersion: v2
+name: weka-clients
+description: mount weka clients with UDP mode
+type: application
+version: 1.0.0
