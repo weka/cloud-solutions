@@ -1,3 +1,5 @@
 .idea
 env_vars
 cluster-config*.json
+*.terraform
+*tfstate*

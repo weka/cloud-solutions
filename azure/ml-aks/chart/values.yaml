@@ -1,0 +1,8 @@
+nodeSelector:
+  agentpool:
+
+weka:
+  backend_ip:
+  frontend_container_cores_num:
+  filesystem_name:
+  mount_point:
