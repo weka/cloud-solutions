@@ -1,2 +1,6 @@
 .idea
 env_vars
+**.terraform
+*.tfstate
+.tfstate.*
+*.terraform.lock.hcl
