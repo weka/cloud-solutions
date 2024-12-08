@@ -1,0 +1,15 @@
+backend_vmss_name     = VMSS_NAME
+create_ml             = true
+subnet_name           = SUBNET_NAME
+vnet_name             = VNET_NAME
+subscription_id       = SUBSCRIPTION_ID
+rg_name               = RG_NAME
+ssh_public_key        = Standard_L8s_v3
+key_vault_name        = KEY_VAULT_NAME
+cluster_name          = CLUSTER_NAME
+prefix                = PREFIX
+node_count            = 3
+instance_type         = "Standard_L8s_v3"
+client_frontend_cores = 1
+vm_username           = "weka"
+os_sku                = "Ubuntu"
