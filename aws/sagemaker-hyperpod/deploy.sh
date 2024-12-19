@@ -3,9 +3,15 @@
 set -ex
 
 BACKEND_IP="$1"
+FILESYSTEM_NAME="$2"
 
 if [[ -z "$BACKEND_IP" ]]; then
-  echo "Usage: $0 <backend_ip>"
+  echo "Usage: $0 <backend_ip> <filesystem_name>"
+  exit 1
+fi
+
+if [[ -z "$FILESYSTEM_NAME" ]]; then
+  echo "Usage: $0 <backend_ip> <filesystem_name>"
   exit 1
 fi
 
@@ -32,8 +38,10 @@ WORKER_GROUP_NAME="${WORKER_GROUP_NAME:-worker-group-1}"
 cd LifecycleScripts
 if [[ "$OSTYPE" == "darwin"* ]]; then
   sed -i '' "s/backend_ip=.*/backend_ip=$BACKEND_IP/" set_weka.sh
+  sed -i '' "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME=$FILESYSTEM_NAME/" set_weka.sh
 else
-    sed -i "s/backend_ip=.*/backend_ip=$BACKEND_IP/" set_weka.sh
+  sed -i "s/backend_ip=.*/backend_ip=$BACKEND_IP/" set_weka.sh
+  sed -i "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME=$FILESYSTEM_NAME/" set_weka.sh
 fi
 
 cat > base-config/provisioning_parameters.json << EOL
@@ -129,8 +137,10 @@ rm base-config/provisioning_parameters.json base-config/lifecycle_script.py
 rm -rf base-config/weka
 if [[ "$OSTYPE" == "darwin"* ]]; then
   sed -i '' "s/backend_ip=.*/backend_ip='<place holder>'/" set_weka.sh
+  sed -i '' "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME='<place holder>'/" set_weka.sh
 else
-    sed -i "s/backend_ip=.*/backend_ip='<place holder>'/" set_weka.sh
+  sed -i "s/backend_ip=.*/backend_ip='<place holder>'/" set_weka.sh
+  sed -i "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME='<place holder>'/" set_weka.sh
 fi
 
 if [[ -n "$TRAINING_PLAN_ARN" ]]; then
@@ -142,12 +152,13 @@ for instance_group in conf['InstanceGroups']:
       instance_group['TrainingPlanArn'] = "$TRAINING_PLAN_ARN"
       break
 json.dump(conf, open('$cluster_config_file', 'w'), indent=2)
-print(json.dumps(conf, indent=2))
 EOL
 python3 add_train_plan.py
 rm add_train_plan.py
 fi
 
-echo "cluster config file location: $(pwd)/$cluster_config_file"
-
 aws --region "$AWS_REGION" sagemaker create-cluster --cli-input-json "file://$cluster_config_file" --output text --no-cli-pager
+
+set +x
+cat "$cluster_config_file"
+echo "cluster config file location: $(pwd)/$cluster_config_file"

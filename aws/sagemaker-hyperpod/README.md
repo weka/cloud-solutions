@@ -3,7 +3,7 @@ The SageMaker HyperPod files here are copied from AWS [SageMaker HyperPod sample
 <br>The unique files are:
 - `set_weka.sh`: will set weka on the SageMaker HyperPod cluster nodes setup
 - `set_env_vars.sh`: will set the required env vars for examples.sh
-- `examples.sh`: will create the SageMaker HyperPod cluster with weka installed
+- `deploy.sh`: will create the SageMaker HyperPod cluster with weka installed
 
 The idea here is to have a simple example to create a SageMaker HyperPod cluster with WEKA installed, while our expectation
 is, that WEKA customers will integrate `set_weka.sh` into their own SageMaker HyperPod cluster setup.

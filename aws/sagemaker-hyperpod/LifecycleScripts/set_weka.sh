@@ -26,7 +26,7 @@ while true;do
   chmod -R 755 /opt/weka/data/agent/tmpfss/cgroup
   sudo sed -i 's/isolate_cpusets=true/isolate_cpusets=false/g' /etc/wekaio/service.conf && systemctl restart weka-agent
 
-  FILESYSTEM_NAME=default # replace with a different filesystem at need
+  FILESYSTEM_NAME='<place holder>'
   MOUNT_POINT="/mnt/weka" # replace with a different mount point at need
   mkdir -p "\$MOUNT_POINT"
 
