@@ -29,6 +29,6 @@ ExecStart=/bin/bash /usr/sbin/update_slurm_conf.sh
 [Install]
 WantedBy=multi-user.target
 EOL
-#systemctl daemon-reload
-#systemctl enable update_slurm_conf.service
-#systemctl start update_slurm_conf.service
+systemctl daemon-reload
+systemctl enable update_slurm_conf.service
+systemctl start update_slurm_conf.service
