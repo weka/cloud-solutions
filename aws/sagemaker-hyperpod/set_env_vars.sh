@@ -39,6 +39,8 @@ export WORKER_GROUP_NAME=$(get_input "Enter the name for the worker group" "work
 echo "export WORKER_GROUP_NAME=${WORKER_GROUP_NAME}" >> env_vars
 export TRAINING_PLAN_ARN=$(get_input "Enter the training plan ARN" "")
 echo "export TRAINING_PLAN_ARN=${TRAINING_PLAN_ARN}" >> env_vars
+export CLUSTER_NAME=$(get_input "Enter the cluster name" "sagemaker-hyperpod")
+echo "export CLUSTER_NAME=${CLUSTER_NAME}" >> env_vars
 
 stack_outputs=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME"  --query 'Stacks[0].Outputs' --output json)
 
@@ -123,3 +125,4 @@ echo "[INFO] INSTANCE_COUNT = ${INSTANCE_COUNT}"
 echo "[INFO] WORKER_EBS_VOLUME_SIZE = ${WORKER_EBS_VOLUME_SIZE}"
 echo "[INFO] WORKER_GROUP_NAME = ${WORKER_GROUP_NAME}"
 echo "[INFO] TRAINING_PLAN_ARN = ${TRAINING_PLAN_ARN}"
+echo "[INFO] CLUSTER_NAME = ${CLUSTER_NAME}"

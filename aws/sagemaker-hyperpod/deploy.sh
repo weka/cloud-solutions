@@ -9,17 +9,13 @@ if [[ -z "$BACKEND_IP" ]]; then
   exit 1
 fi
 
-CLUSTER_NAME="$2"
-if [[ -z "$CLUSTER_NAME" ]]; then
-  CLUSTER_NAME="sagemaker-hyperpod"
-fi
-
 # validate that SUBNET_ID, FSX_ID, FSX_MOUNTNAME, SECURITY_GROUP, ROLE and BUCKET are set
 if [[ -z "$SUBNET_ID" || -z "$FSX_ID" || -z "$FSX_MOUNTNAME" || -z "$SECURITY_GROUP" || -z "$ROLE" || -z "$BUCKET" ]]; then
   echo "Please set SUBNET_ID, FSX_ID, FSX_MOUNTNAME, SECURITY_GROUP, ROLE and BUCKET environment variables"
   exit 1
 fi
 
+CLUSTER_NAME="${CLUSTER_NAME:-sagemaker-hyperpod}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-p5.48xlarge}"
 AWS_REGION="${AWS_REGION:-us-west-1}"
 INSTANCE_COUNT="${INSTANCE_COUNT:-1}"
