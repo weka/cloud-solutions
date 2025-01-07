@@ -19,17 +19,15 @@ The following AWS resources (can use AWS official [CF](https://catalog.workshops
 - IAM ROLE
 - S3 Bucket
 
-### Create SageMaker HyperPod Cluster
+### SageMaker HyperPod Cluster with WEKA
 - set the required aws profile
 - update the parameters in the examples.sh
 - run `cd aws/sagemaker-hyperpod`
 - run `./set_env_vars.sh <stack_name> && source env_vars` if the pre-requisites are created using the CF above
-- run `./examples.sh <weka backend ip> <SageMaker cluster_name>`
-<br>The example will run by default with:
-  - INSTANCE_TYPE=`p5.48xlarge`, for other instance type, set the INSTANCE_TYPE env var
-  - AWS_REGION=`us-west-1`, for other region, set the AWS_REGION env var
-  - INSTANCE_COUNT=`1`, for other instance count, set the INSTANCE_COUNT env var
-  - CONTROLLER_INSTANCE_TYPE=`m5.xlarge`, for other controller instance type, set the CONTROLLER_INSTANCE_TYPE env var
+- For a new cluster
+  - run `./deploy.sh <weka backend ip> <FS name>`
+- For an existing cluster
+  - run `./deploy_weka_into_existing_cluster.sh <weka_backend_ip> <FS name>`
 
 ### Access the nodes
 ```shell
