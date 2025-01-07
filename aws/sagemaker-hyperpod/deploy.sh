@@ -4,13 +4,14 @@ set -ex
 
 BACKEND_IP="$1"
 FILESYSTEM_NAME="$2"
+ENABLE_WEKA="${ENABLE_WEKA:-true}"
 
-if [[ -z "$BACKEND_IP" ]]; then
+if [[ -z "$BACKEND_IP" && "$ENABLE_WEKA" == "true" ]]; then
   echo "Usage: $0 <backend_ip> <filesystem_name>"
   exit 1
 fi
 
-if [[ -z "$FILESYSTEM_NAME" ]]; then
+if [[ -z "$FILESYSTEM_NAME" && "$ENABLE_WEKA" == "true" ]]; then
   echo "Usage: $0 <backend_ip> <filesystem_name>"
   exit 1
 fi
@@ -36,13 +37,6 @@ CONTROLLER_GROUP_NAME="${CONTROLLER_GROUP_NAME:-controller-machine}"
 WORKER_GROUP_NAME="${WORKER_GROUP_NAME:-worker-group-1}"
 
 cd LifecycleScripts
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  sed -i '' "s/backend_ip=.*/backend_ip=$BACKEND_IP/" set_weka.sh
-  sed -i '' "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME=$FILESYSTEM_NAME/" set_weka.sh
-else
-  sed -i "s/backend_ip=.*/backend_ip=$BACKEND_IP/" set_weka.sh
-  sed -i "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME=$FILESYSTEM_NAME/" set_weka.sh
-fi
 
 cat > base-config/provisioning_parameters.json << EOL
 {
@@ -61,10 +55,24 @@ cat > base-config/provisioning_parameters.json << EOL
 }
 EOL
 
-cp lifecycle_script.py base-config
-mkdir -p base-config/weka
-cp set_weka.sh weka_slurm.py utils.py update_slurm_conf.sh base-config/weka
-aws --region "$AWS_REGION" s3 cp --recursive base-config/ s3://${BUCKET}/src
+if [[ "$ENABLE_WEKA" == "true" ]]; then
+  cp lifecycle_script.py base-config
+  mkdir -p base-config/weka
+  cp set_weka.sh weka_slurm.py utils.py update_slurm_conf.sh base-config/weka
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/backend_ip=.*/backend_ip=$BACKEND_IP/" base-config/weka/set_weka.sh
+    sed -i '' "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME=$FILESYSTEM_NAME/" base-config/weka/set_weka.sh
+  else
+    sed -i "s/backend_ip=.*/backend_ip=$BACKEND_IP/" base-config/weka/set_weka.sh
+    sed -i "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME=$FILESYSTEM_NAME/" base-config/weka/set_weka.sh
+  fi
+  aws --region "$AWS_REGION" s3 cp --recursive base-config/ "s3://${BUCKET}/src"
+  git checkout base-config/lifecycle_script.py
+  rm -rf base-config/weka
+else
+  aws --region "$AWS_REGION" s3 cp --recursive base-config/ "s3://${BUCKET}/src"
+fi
+rm base-config/provisioning_parameters.json
 
 cluster_config_file="cluster-config-$(date '+%Y-%m-%d_%H:%M:%S').json"
 cat > "$cluster_config_file" << EOL
@@ -132,16 +140,6 @@ cat > "$cluster_config_file" << EOL
     }
 }
 EOL
-
-rm base-config/provisioning_parameters.json base-config/lifecycle_script.py
-rm -rf base-config/weka
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  sed -i '' "s/backend_ip=.*/backend_ip='<place holder>'/" set_weka.sh
-  sed -i '' "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME='<place holder>'/" set_weka.sh
-else
-  sed -i "s/backend_ip=.*/backend_ip='<place holder>'/" set_weka.sh
-  sed -i "s/FILESYSTEM_NAME=.*/FILESYSTEM_NAME='<place holder>'/" set_weka.sh
-fi
 
 if [[ -n "$TRAINING_PLAN_ARN" ]]; then
 cat > add_train_plan.py << EOL
