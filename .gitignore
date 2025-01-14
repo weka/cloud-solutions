@@ -3,3 +3,6 @@ env_vars
 cluster-config*.json
 *.terraform
 *tfstate*
+weka-pcluster-client-policy.json
+pcluster-weka-template.yaml
+.venv

@@ -1,0 +1,112 @@
+Region: us-east-2
+Image:
+  Os: alinux2
+HeadNode:
+  InstanceType: c6a.4xlarge
+  Networking:
+    SubnetId: subnet-123456789abcdefg
+    AdditionalSecurityGroups:
+      - sg-123456789abcdefg
+  Ssh:
+    KeyName: support_key
+  CustomActions:
+    OnNodeConfigured:
+      Sequence:
+        - Script: s3://MY-S3-BUCKET/scripts/virtualenv-setup.sh
+        - Script: s3://MY-S3-BUCKET/scripts/weka-install.py
+          Args:
+            - "--alb-dns-name=internal-weka-lb-12345689.us-east-2.elb.amazonaws.com"
+            - "--filesystem-name=default"
+            - "--mount-point=/mnt/weka"
+  Iam:
+    S3Access:
+      - BucketName: MY-S3-BUCKET
+    AdditionalIamPolicies:
+      - Policy: arn:aws:iam::123456789:policy/weka-pcluster-client-policy
+
+Scheduling:
+  Scheduler: slurm
+  SlurmSettings:
+    CustomSlurmSettings:
+      - ProctrackType: proctrack/cgroup
+      - TaskPluginParam: SlurmdOffSpec
+      - SelectType: select/cons_tres
+      - SelectTypeParameters: CR_Core_Memory
+      - JobAcctGatherType: jobacct_gather/cgroup
+      - PrologFlags: Contain
+  SlurmQueues:
+  - Name: cpu
+    ComputeResources:
+    - Name: c7a16xlarge
+      Instances:
+      - InstanceType: c7a.16xlarge
+      MinCount: 1
+      MaxCount: 10
+      DisableSimultaneousMultithreading: true
+    Networking:
+      SubnetIds:
+      - subnet-123456789abcdefg
+      AdditionalSecurityGroups:
+      - sg-123456789abcdefg
+    CustomActions:
+      OnNodeConfigured:
+        Sequence:
+        - Script: s3://MY-S3-BUCKET/scripts/virtualenv-setup.sh
+        - Script: s3://MY-S3-BUCKET/scripts/weka-install.py
+          Args:
+            - "--alb-dns-name=internal-weka-lb-12345689.us-east-2.elb.amazonaws.com"
+            - "--filesystem-name=default"
+            - "--mount-point=/mnt/weka"
+    Iam:
+      S3Access:
+        - BucketName: MY-S3-BUCKET
+      AdditionalIamPolicies:
+        - Policy: arn:aws:iam::123456789:policy/weka-pcluster-client-policy
+
+  - Name: hpc
+    ComputeResources:
+    - Name: hpc7a96xlarge
+      Instances:
+      - InstanceType: hpc7a.96xlarge
+      MinCount: 1
+      MaxCount: 10
+      Efa:
+        Enabled: true
+      CustomSlurmSettings:
+        RealMemory: 742110
+        CpuSpecList: 95,191
+    Networking:
+      PlacementGroup:
+        Enabled: true
+      SubnetIds:
+      - subnet-123456789abcdefg
+      AdditionalSecurityGroups:
+      - sg-123456789abcdefg
+    CustomActions:
+      OnNodeConfigured:
+        Sequence:
+        - Script: s3://MY-S3-BUCKET/scripts/virtualenv-setup.sh
+        - Script: s3://MY-S3-BUCKET/scripts/weka-install.py
+          Args:
+            - "--alb-dns-name=internal-weka-lb-12345689.us-east-2.elb.amazonaws.com"
+            - "--filesystem-name=default"
+            - "--mount-point=/mnt/weka"
+            - "--cores=95,191"
+            - "--security-groups=sg-123456789abcdefg"
+    Iam:
+      S3Access:
+        - BucketName: MY-S3-BUCKET
+      AdditionalIamPolicies:
+        - Policy: arn:aws:iam::123456789:policy/weka-pcluster-client-policy
+
+Tags:
+  - Key: project
+    Value: my-project
+
+Monitoring:
+  Logs:
+    CloudWatch:
+      Enabled: true
+  Dashboards:
+    CloudWatch:
+      Enabled: true
