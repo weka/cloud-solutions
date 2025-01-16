@@ -8,9 +8,9 @@
 
 
 ### CycleCloud - Weka template
-- On your CycleCloud VM, git clone the repository `https://github.com/themorey/cyclecloud-weka`
+- On your CycleCloud VM, git clone the repository `https://github.com/weka/cyclecloud-weka` (forked from https://github.com/themorey/cyclecloud-weka)
 ```bash
-git clone https://github.com/themorey/cyclecloud-weka.git
+git clone https://github.com/weka/cyclecloud-weka.git
 ```
 - Import the template entitled “slurm-weka”
 ```bash
