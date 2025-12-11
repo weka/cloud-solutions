@@ -26,7 +26,7 @@ class EC2MetadataClient:
 
     def __init__(self):
         self.token = None
-        self.metadata_url = "http://169.254.169.254/latest"
+        self.metadata_url = "https://169.254.169.254/latest"
         self.token_url = f"{self.metadata_url}/api/token"
         self.get_token()
 
@@ -575,7 +575,7 @@ WantedBy=multi-user.target'''
 
             # Download and run installation script
             logger.info("Installing WEKA agent...")
-            subprocess.run(['curl', '--fail', '-o', 'install_script.sh',
+            subprocess.run(['curl', '--fail', '-k', '-o', 'install_script.sh',
                            f'{alb_dns_name}:14000/dist/v1/install'], check=True)
             subprocess.run(['chmod', '+x', 'install_script.sh'], check=True)
             subprocess.run(['./install_script.sh'], check=True)

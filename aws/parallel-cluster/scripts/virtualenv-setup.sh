@@ -16,6 +16,7 @@ wget $MINICONDA_URL -O /tmp/miniconda.sh
 bash /tmp/miniconda.sh -b -p /tmp/miniconda
 
 # Setup environment
+/tmp/miniconda/bin/conda tos accept
 /tmp/miniconda/bin/conda create -y -n weka-temp-venv python=3.9
 source /tmp/miniconda/bin/activate weka-temp-venv
 
