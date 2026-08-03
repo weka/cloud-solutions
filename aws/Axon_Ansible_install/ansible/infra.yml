@@ -1,0 +1,62 @@
+---
+# infra.yml -- OPTIONAL greenfield infrastructure through Ansible.
+#
+#   ansible-playbook -e @weka_vars.yml infra.yml
+#
+# Wraps scripts/create-infrastructure.sh: creates the missing runbook §3
+# pieces inside your EXISTING VPC -- self-referencing SGs, optional SSM
+# interface endpoints, IAM role + instance profile (and a subnet, unless
+# existing_subnet_id says to reuse one). It does NOT create a VPC, IGW,
+# NAT, or S3 endpoint.
+#
+# Fill the "greenfield infrastructure" block in weka_vars.yml first, then
+# copy this playbook's printed ids back into weka_vars.yml
+# (subnet_id / sg_ena / sg_efa / instance_profile_arn) before running site.yml.
+#
+# Most deployments have this infrastructure already and never run this.
+
+- name: WEKA greenfield infrastructure (optional)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pkg_dir: "{{ playbook_dir }}/.."
+    nl: "\n"   # real newline for join()
+
+  tasks:
+    - name: Validate greenfield variables
+      ansible.builtin.assert:
+        that:
+          - vpc_id is defined and vpc_id | length > 0
+          - account_id is defined and account_id | length > 0
+          - (existing_subnet_id is defined and existing_subnet_id | length > 0) or
+            (subnet_cidr is defined and subnet_cidr | length > 0 and
+             availability_zone_id is defined and availability_zone_id | length > 0)
+        fail_msg: >-
+          Fill the greenfield block in weka_vars.yml: vpc_id and account_id,
+          plus either existing_subnet_id (reuse) or subnet_cidr +
+          availability_zone_id (create)
+
+    - name: Render weka.conf from Ansible variables
+      ansible.builtin.template:
+        src: templates/weka.conf.j2
+        dest: "{{ pkg_dir }}/weka.conf"
+        mode: "0644"
+
+    - name: Create infrastructure (SGs, optional endpoints, IAM)
+      ansible.builtin.command: bash scripts/create-infrastructure.sh
+      args:
+        chdir: "{{ pkg_dir }}"
+      register: infra
+      changed_when: true
+
+    - name: Show created resources
+      ansible.builtin.debug:
+        msg: |
+          {{ infra.stdout_lines | join(nl) }}
+
+    - name: Reminder
+      ansible.builtin.debug:
+        msg: >-
+          Copy the ids above into weka_vars.yml (subnet_id, sg_ena, sg_efa,
+          instance_profile_arn), then run site.yml.

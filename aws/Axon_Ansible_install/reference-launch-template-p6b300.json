@@ -1,0 +1,433 @@
+{
+ "LaunchTemplateData": {
+  "InstanceType": "p6-b300.48xlarge",
+  "ImageId": "AMI_ID_PLACEHOLDER",
+  "IamInstanceProfile": {
+   "Arn": "arn:aws:iam::ACCOUNT_ID:instance-profile/WEKA_P6_INSTANCE_PROFILE"
+  },
+  "MetadataOptions": {
+   "HttpEndpoint": "enabled",
+   "HttpTokens": "required",
+   "HttpPutResponseHopLimit": 2,
+   "InstanceMetadataTags": "disabled"
+  },
+  "BlockDeviceMappings": [
+   {
+    "DeviceName": "/dev/sda1",
+    "Ebs": {
+     "VolumeSize": 500,
+     "VolumeType": "gp3",
+     "Iops": 6000,
+     "Throughput": 500,
+     "DeleteOnTermination": true,
+     "Encrypted": true
+    }
+   }
+  ],
+  "NetworkInterfaces": [
+   {
+    "NetworkCardIndex": 0,
+    "DeviceIndex": 0,
+    "InterfaceType": "interface",
+    "Description": "mgmt (nci0/dev0) - WEKA management, S3, default route - NOT weka data",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 1,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci1/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 2,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci2/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 3,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci3/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 4,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci4/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 5,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci5/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 6,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci6/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 7,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci7/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 8,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci8/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 9,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci9/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 10,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci10/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 11,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci11/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 12,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci12/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 13,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci13/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 14,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci14/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 15,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci15/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 16,
+    "DeviceIndex": 0,
+    "InterfaceType": "efa-only",
+    "Description": "efa (nci16/dev0) - GPU/NCCL, no IP",
+    "Groups": [
+     "SG_EFA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true
+   },
+   {
+    "NetworkCardIndex": 1,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci1/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 2,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci2/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 3,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci3/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 4,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci4/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 5,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci5/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 6,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci6/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 7,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci7/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 8,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci8/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 9,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci9/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 10,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci10/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 11,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci11/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 12,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci12/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 13,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci13/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   },
+   {
+    "NetworkCardIndex": 14,
+    "DeviceIndex": 1,
+    "InterfaceType": "interface",
+    "Description": "weka-data (nci14/dev1) - ENA data plane",
+    "Groups": [
+     "SG_ENA_PLACEHOLDER"
+    ],
+    "SubnetId": "SUBNET_ID_PLACEHOLDER",
+    "DeleteOnTermination": true,
+    "AssociatePublicIpAddress": false
+   }
+  ],
+  "TagSpecifications": [
+   {
+    "ResourceType": "instance",
+    "Tags": [
+     {
+      "Key": "weka-cluster",
+      "Value": "p6b300-weka"
+     },
+     {
+      "Key": "Name",
+      "Value": "p6b300-weka-node"
+     },
+     {
+      "Key": "aws-apn-id",
+      "Value": "pc:epkj0ftddjwa38m3oq9umjjlm"
+     }
+    ]
+   },
+   {
+    "ResourceType": "network-interface",
+    "Tags": [
+     {
+      "Key": "weka-cluster",
+      "Value": "p6b300-weka"
+     },
+     {
+      "Key": "aws-apn-id",
+      "Value": "pc:epkj0ftddjwa38m3oq9umjjlm"
+     }
+    ]
+   },
+   {
+    "ResourceType": "volume",
+    "Tags": [
+     {
+      "Key": "weka-cluster",
+      "Value": "p6b300-weka"
+     },
+     {
+      "Key": "aws-apn-id",
+      "Value": "pc:epkj0ftddjwa38m3oq9umjjlm"
+     }
+    ]
+   }
+  ]
+ },
+ "LaunchTemplateName": "weka-p6b300-16efa-15ena",
+ "VersionDescription": "p6-b300.48xl: nci0 mgmt/S3 only, 16x EFA-only (nci1-16/dev0), 14x weka ENA (nci1-14/dev1), IMDSv2 hop2"
+}

@@ -1,0 +1,53 @@
+---
+# day2.yml -- day-2 operations through Ansible.
+#
+#   ansible-playbook -e @weka_vars.yml -e weka_op=status day2.yml
+#   ansible-playbook -e @weka_vars.yml -e weka_op=scale-out day2.yml
+#   ansible-playbook -e @weka_vars.yml -e weka_op=scale-in  -e weka_target=i-0123... day2.yml
+#   ansible-playbook -e @weka_vars.yml -e weka_op=replace   -e weka_target=i-0123... day2.yml
+#
+# Scale-out expects the new nodes to already be launched from the same launch
+# template (add a launch task or use launch_instances the same way site.yml
+# does). Credentials come from Secrets Manager automatically.
+
+- name: WEKA day-2 operation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pkg_dir: "{{ playbook_dir }}/.."
+    nl: "\n"   # real newline for join()
+    weka_target: ""
+
+  tasks:
+    - name: Validate requested operation
+      ansible.builtin.assert:
+        that:
+          - weka_op is defined
+          - weka_op in ['status', 'scale-out', 'scale-in', 'replace']
+          - weka_op not in ['scale-in', 'replace'] or weka_target | length > 0
+        fail_msg: >-
+          Set -e weka_op={status|scale-out|scale-in|replace};
+          scale-in/replace also need -e weka_target=<instance-id>
+
+    - name: Render weka.conf from Ansible variables
+      ansible.builtin.template:
+        src: templates/weka.conf.j2
+        dest: "{{ pkg_dir }}/weka.conf"
+        mode: "0644"
+
+    - name: "Run day-2 operation: {{ weka_op }} {{ weka_target }}"
+      ansible.builtin.command: ./deploy.sh day2 {{ weka_op }} {{ weka_target }}
+      args:
+        chdir: "{{ pkg_dir }}"
+      environment:
+        # scale-out: pass -e weka_orch=<member-instance-id> when a NEW (not yet
+        # member) node has the lowest instance-id and would win the election
+        WEKA_ORCH: "{{ weka_orch | default('') }}"
+      register: day2
+      changed_when: weka_op != 'status'
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: |
+          {{ day2.stdout_lines[-35:] | join(nl) }}

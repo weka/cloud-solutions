@@ -1,0 +1,158 @@
+---
+# site.yml -- day-0 WEKA deployment, end to end, from the Ansible control node.
+#
+#   ansible-playbook -e @weka_vars.yml site.yml
+#
+# Everything runs on localhost against the AWS API (the package's SSM design
+# means no node connectivity, inventory, or SSH keys are needed). Requires:
+# aws CLI with credentials matching iam/operator-policy.json, python3.
+#
+# Flow: render weka.conf -> generate + create launch template -> (optionally)
+# launch the nodes -> wait for SSM -> preflight all nodes (0 failures
+# required) -> run the installer on the elected orchestrator.
+
+- name: Deploy WEKA converged cluster (day 0)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pkg_dir: "{{ playbook_dir }}/.."
+    nl: "\n"   # real newline for join()
+
+  tasks:
+    - name: Render weka.conf from Ansible variables
+      ansible.builtin.template:
+        src: templates/weka.conf.j2
+        dest: "{{ pkg_dir }}/weka.conf"
+        mode: "0644"
+
+    # account-side gate: verify runbook §3 prerequisites (egress, S3/SSM
+    # paths, SGs, IAM, AMI, AZ offering) before creating anything
+    - name: Environment preflight (read-only gate)
+      ansible.builtin.command: bash scripts/weka-env-preflight.sh
+      args:
+        chdir: "{{ pkg_dir }}"
+      register: envpf
+      changed_when: false
+      failed_when: false
+
+    - name: Environment preflight report
+      ansible.builtin.debug:
+        msg: |
+          {{ envpf.stdout_lines | join(nl) }}
+
+    - name: Gate on environment FAILs
+      ansible.builtin.assert:
+        that: envpf.rc == 0
+        fail_msg: Environment preflight FAILed -- fix the [FAIL] lines above (runbook §3) and re-run.
+        success_msg: Environment preflight passed.
+
+    - name: Generate, validate and create the launch template
+      ansible.builtin.command: bash scripts/generate-launch-template.sh
+      args:
+        chdir: "{{ pkg_dir }}"
+      register: gen
+      changed_when: "'creating launch template' in gen.stdout"
+
+    - name: Show generator validation summary
+      ansible.builtin.debug:
+        msg: "{{ gen.stdout_lines | select('search', 'ok|FAIL|WARN|layout|ENIs') | list }}"
+
+    - name: Count already-running cluster instances
+      ansible.builtin.shell: >-
+        aws ec2 describe-instances --region {{ aws_region }}
+        --filters Name=tag:weka-cluster,Values={{ cluster_name }}
+        Name=instance-state-name,Values=running,pending
+        --query 'Reservations[].Instances[].InstanceId' --output text | wc -w
+      register: existing
+      changed_when: false
+
+    - name: Launch the cluster nodes
+      when: launch_instances | bool and (existing.stdout | int) < (expected_nodes | int)
+      ansible.builtin.command: >-
+        aws ec2 run-instances --region {{ aws_region }}
+        --launch-template LaunchTemplateName={{ launch_template_name }}
+        --count {{ expected_nodes }}
+        {% if capacity_block | bool %}--instance-market-options MarketType=capacity-block{% endif %}
+        {% if capacity_reservation_id | length > 0 %}--capacity-reservation-specification CapacityReservationTarget={CapacityReservationId={{ capacity_reservation_id }}}{% endif %}
+        --query Instances[].InstanceId --output text
+      register: launch
+      changed_when: true
+
+    - name: Wait until all nodes are SSM-online
+      # anchored to EC2 RUNNING instances -- SSM registrations of recently
+      # terminated nodes linger and would otherwise count as ghosts
+      ansible.builtin.shell: >-
+        IDS=$(aws ec2 describe-instances --region {{ aws_region }}
+        --filters Name=tag:weka-cluster,Values={{ cluster_name }}
+        Name=instance-state-name,Values=running
+        --query 'Reservations[].Instances[].InstanceId' --output text | tr '\t\n' ',,' | sed 's/,*$//');
+        if [ -z "$IDS" ]; then echo 0; else
+        aws ssm describe-instance-information --region {{ aws_region }}
+        --filters "Key=InstanceIds,Values=$IDS"
+        --query 'length(InstanceInformationList[?PingStatus==`Online`])' --output text; fi
+      register: ssm_online
+      until: ssm_online.stdout | int >= expected_nodes | int
+      retries: 40
+      delay: 15
+      changed_when: false
+
+    - name: Attach cross-VPC data ENIs (only when a plan exists)
+      ansible.builtin.command: bash scripts/attach-data-enis.sh
+      args:
+        chdir: "{{ pkg_dir }}"
+      register: eni_attach
+      changed_when: "'attached 0' not in eni_attach.stdout"
+      when: (pkg_dir + '/data-eni-plan.json') is file
+
+    - name: Run preflight on every node
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ pkg_dir }}"
+        B64=$(base64 < scripts/weka-preflight.sh | tr -d '\n')
+        # target the RUNNING instances by id -- tag targeting can resolve to
+        # recently terminated nodes whose SSM registrations have not aged out
+        IDS=$(aws ec2 describe-instances --region {{ aws_region }} \
+          --filters Name=tag:weka-cluster,Values={{ cluster_name }} Name=instance-state-name,Values=running \
+          --query "Reservations[].Instances[].InstanceId" --output text)
+        CID=$(aws ssm send-command --region {{ aws_region }} \
+          --document-name AWS-RunShellScript \
+          --instance-ids $IDS \
+          --parameters "commands=[\"echo $B64 | base64 -d > /tmp/preflight.sh && sudo bash /tmp/preflight.sh\"]" \
+          --query Command.CommandId --output text)
+        # wait until all node invocations finish (fresh nodes refresh
+        # package lists during the preflight, which can take a few minutes)
+        for i in $(seq 1 30); do
+          sleep 10
+          DONE=$(aws ssm list-command-invocations --region {{ aws_region }} --command-id "$CID" \
+            --query 'length(CommandInvocations[?Status==`Success` || Status==`Failed`])' --output text)
+          [ "$DONE" -ge "{{ expected_nodes }}" ] && break
+        done
+        aws ssm list-command-invocations --region {{ aws_region }} --command-id "$CID" --details \
+          --query 'CommandInvocations[].CommandPlugins[0].Output' --output text
+      register: preflight
+      failed_when: >
+        preflight.rc != 0
+        or ('/ 0 fail' not in preflight.stdout)
+        or (preflight.stdout | regex_findall('/ 0 fail') | length) < (expected_nodes | int)
+      changed_when: false
+
+    - name: Install WEKA (deploy.sh finds the elected orchestrator via SSM)
+      ansible.builtin.command: ./deploy.sh install
+      args:
+        chdir: "{{ pkg_dir }}"
+      register: install
+      changed_when: "'completed successfully' in install.stdout"
+
+    - name: Save the full install output (copy-paste source)
+      ansible.builtin.copy:
+        content: "{{ install.stdout }}"
+        dest: "{{ playbook_dir }}/weka-install-{{ cluster_name }}.log"
+        mode: "0644"
+
+    - name: Show cluster status and next steps
+      ansible.builtin.debug:
+        msg: |
+          {{ install.stdout_lines[-40:] | join(nl) }}
+
+          (full output saved to: {{ playbook_dir }}/weka-install-{{ cluster_name }}.log)
