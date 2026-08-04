@@ -29,8 +29,6 @@ runtime on each node.
 | `install/weka-day2.sh` | Day-2 operations: scale-out / scale-in / replace / status |
 | `iam/instance-policy.json` | Instance-profile policy template (what the NODES may do) |
 | `iam/operator-policy.json` | Operator policy template (what YOU need to run this package) |
-| `ANSIBLE-RUNBOOK.md` | The Ansible-driven path through this package (automation-mandated environments) |
-| `ansible/` | Ansible entry point: `site.yml` (day 0) + `day2.yml` — see ANSIBLE-RUNBOOK.md |
 | `reference-launch-template-p6b300.json` | Reference: the full p6-b300.48xlarge template layout |
 
 Every script carries a `CUSTOMER CONFIGURATION` block at the top — all
@@ -71,7 +69,7 @@ expects — but bring-your-own is the primary path.)
      ENI attachments (same AWS account and same AZ required). Launch
      templates cannot span VPCs, so the instance launches into the
      management VPC and the generator emits `data-eni-plan.json`; deploy.sh
-     and the Ansible playbook execute it automatically post-launch
+     executes automatically post-launch (deploy.sh invokes it when a plan file exists)
      (`scripts/attach-data-enis.sh`, idempotent — scale-out/replacement
      nodes get their ENIs the same way). `SG_MGMT` is required (SG_ENA
      belongs to the data VPC). On GPU/EFA platforms the EFA interfaces stay
@@ -475,6 +473,20 @@ replacement and run `scale-out`. For already-terminated instances pass
 **Teardown / reinstall:** the installer refuses to run over an existing
 cluster. To rebuild from scratch, run on all nodes via SSM:
 `sudo weka local stop -f && sudo weka local rm --all -f`, then re-run day-0.
+
+**Full fleet teardown** (destroys the cluster and its artifacts):
+
+```bash
+# terminate every tagged instance
+aws ec2 terminate-instances --instance-ids $(aws ec2 describe-instances \
+  --filters "Name=tag:weka-cluster,Values=<CLUSTER_NAME>" \
+            "Name=instance-state-name,Values=running,stopped" \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+# remove the deployment artifacts
+aws ssm delete-parameter --name /weka/<CLUSTER_NAME>/baseline
+aws secretsmanager delete-secret --secret-id weka/<CLUSTER_NAME>/admin --force-delete-without-recovery
+aws ec2 delete-launch-template --launch-template-name <TEMPLATE_NAME>
+```
 
 ## 9. Support notes
 
