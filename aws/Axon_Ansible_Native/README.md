@@ -11,6 +11,21 @@ ansible-playbook -e @weka_vars.yml cluster.yml
 ansible-playbook -e @weka_vars.yml fs.yml
 ```
 
+## Which package should I use?
+
+| | **This package (Ansible-native)** | [Axon Bash Install](../Axon_Bash_install/README.md) |
+|---|---|---|
+| Dependencies | Ansible + AWS collections + Session Manager plugin | AWS CLI + bash |
+| Configuration | `weka_vars.yml` (one file) | `weka.conf` (one file) |
+| Day 0 + core day-2 | ✅ | ✅ |
+| Filesystem + POSIX mounts, health gates, maintenance stop/start | ✅ playbooks | manual |
+| Rerun/resume semantics | natively idempotent — plain rerun resumes anything | guarded, with documented recovery steps |
+| Best for | Ansible shops, AWX/CI integration, full-lifecycle automation | minimal workstations, script-first teams, quick POCs |
+
+Both packages share the same workstation tooling, IAM model, tag-driven
+design, and launch templates — moving between them does not require
+redeploying (the variable model carries over).
+
 ## How it works
 
 - **Native Ansible over SSM.** Every node task runs through the
