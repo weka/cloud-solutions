@@ -23,6 +23,7 @@ it can drive this package.
 | Filesystem + POSIX mounts | manual (`weka fs` + `mount -t wekafs`) | ✅ `fs.yml` |
 | Health gates, maintenance stop/start | manual | ✅ playbooks |
 | Rerun/resume semantics | guarded, with documented recovery steps | natively idempotent — plain rerun resumes anything |
+| Cross-VPC data-plane ENIs (mgmt/data in different VPCs) | ✅ automated (`attach-data-enis.sh`) | not yet — single-VPC layouts |
 | Best for | minimal workstations, script-first teams, quick POCs, air-gapped ops | Ansible shops, AWX/CI integration, full-lifecycle automation |
 
 Both packages share the same workstation tooling (`scripts/`), IAM model,

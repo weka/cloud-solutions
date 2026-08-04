@@ -419,7 +419,15 @@ setup_container() {
   [ "$join" = "1" ] && cmd+=" --join-ips ${JOIN_IPS}"
   cmd+="$(net_args "$nics")"
   cmd+=" --management-ips $MGMT_IP"
-  echo "+ $cmd"; eval "$cmd"
+  echo "+ $cmd"
+  if ! eval "$cmd"; then
+    # transient create failures happen (e.g. loop-device busy during squashfs
+    # prepare) -- clean the partial container and retry once
+    echo "setup of $name failed -- removing partial container and retrying once"
+    weka local rm -f "$name" 2>/dev/null || true
+    sleep 10
+    eval "$cmd"
+  fi
 }
 
 case "$PHASE" in
@@ -547,8 +555,19 @@ case "$PHASE" in
           '.[] | select(.container_name=="drives0" and (.ips | index($ip))) | .host_id' \
           | grep -oE '[0-9]+' | head -1)
     [ -n "$cid" ] || { echo "FATAL: could not resolve drives0 container id for $MGMT_IP"; exit 1; }
-    echo "+ weka cluster drive add $cid $WEKA_DRIVES"
-    weka cluster drive add "$cid" $WEKA_DRIVES --force
+    # per-drive adds, tolerant of a prior interrupted attempt that claimed a
+    # device locally without registering it ("Device is already in use")
+    rc=0
+    for d in $WEKA_DRIVES; do
+      if out=$(weka cluster drive add "$cid" "$d" --force 2>&1); then
+        echo "added $d"
+      elif echo "$out" | grep -qi 'already in use\|already exist'; then
+        echo "tolerated $d: already claimed (prior attempt)"
+      else
+        echo "ERROR adding $d: $out"; rc=1
+      fi
+    done
+    [ $rc -eq 0 ] || exit 1
     ;;
   drain-local)
     weka local stop -f || true
