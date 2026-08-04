@@ -20,6 +20,7 @@ ansible-playbook -e @weka_vars.yml fs.yml
 | Day 0 + core day-2 | ✅ | ✅ |
 | Filesystem + POSIX mounts, health gates, maintenance stop/start | ✅ playbooks | manual |
 | Rerun/resume semantics | natively idempotent — plain rerun resumes anything | guarded, with documented recovery steps |
+| Cross-VPC data-plane ENIs (mgmt/data in different VPCs) | not yet — single-VPC layouts | ✅ automated (`attach-data-enis.sh`) |
 | Best for | Ansible shops, AWX/CI integration, full-lifecycle automation | minimal workstations, script-first teams, quick POCs |
 
 Both packages share the same workstation tooling, IAM model, tag-driven
