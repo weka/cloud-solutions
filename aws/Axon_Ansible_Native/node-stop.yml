@@ -1,0 +1,45 @@
+---
+# node-stop.yml -- maintenance stop of ONE member (planned reboot/service).
+#
+#   ansible-playbook -i <inv> -e weka_stop_target=<inventory-hostname> node-stop.yml
+#
+# Health-gated (the cluster must be able to lose the node), then stops the
+# WEKA containers on the target. The cluster runs degraded until node-start.
+
+- import_playbook: membership.yml
+
+- name: Node maintenance stop
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "node-stop | validate target"
+      run_once: true
+      ansible.builtin.assert:
+        that:
+          - weka_stop_target is defined
+          - weka_stop_target in (groups['weka_members'] | default([]))
+        fail_msg: pass -e weka_stop_target=<inventory-hostname of a MEMBER>
+
+    - name: "node-stop | cluster must be OK + fully protected"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      when: not (weka_skip_health_checks | default(false) | bool)
+      ansible.builtin.shell: |
+        set -e
+        S=$(weka status -J)
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ]
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ]
+      changed_when: false
+
+    - name: "node-stop | stop WEKA on the target"
+      run_once: true
+      delegate_to: "{{ weka_stop_target }}"
+      ansible.builtin.command: weka local stop
+      changed_when: true
+
+    - name: "node-stop | report"
+      run_once: true
+      ansible.builtin.debug:
+        msg: >-
+          {{ weka_stop_target }} stopped for maintenance -- the cluster runs
+          DEGRADED until node-start.yml. Do not stop another node.

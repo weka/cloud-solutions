@@ -1,0 +1,112 @@
+---
+# Build deps for WEKA driver compilation: kernel headers + the exact gcc the
+# running kernel was built with, plus make/jq/awscli. Parity notes: package
+# installs are best-effort (like the bash `|| true`) with explicit gates at
+# the end -- absence only matters if the fallbacks also fail.
+
+- name: "deps | detect kernel compiler package"
+  ansible.builtin.shell: grep -oE 'gcc-[0-9]+' /proc/version | head -1
+  register: kgcc_probe
+  changed_when: false
+  failed_when: false
+
+- name: "deps | apt: build deps + exact kernel headers"
+  when: ansible_pkg_mgr == 'apt'
+  ansible.builtin.apt:
+    update_cache: true
+    name: >-
+      {{ ['make', 'gcc', 'jq', 'awscli', 'linux-headers-' + ansible_kernel]
+         + ([kgcc_probe.stdout | trim] if kgcc_probe.stdout | trim | length > 0 else []) }}
+  register: apt_deps
+  failed_when: false
+
+- name: "deps | dnf/yum: build deps + exact kernel-devel"
+  when: ansible_pkg_mgr in ['dnf', 'dnf5', 'yum']
+  ansible.builtin.package:
+    name:
+      - make
+      - gcc
+      - jq
+      - "kernel-devel-{{ ansible_kernel }}"
+  register: rpm_deps
+  failed_when: false
+
+# awscli separately on RPM distros: EPEL-only on RHEL-family, present in
+# AL2023 -- best-effort, bundle fallback below
+- name: "deps | dnf/yum: awscli (best-effort)"
+  when: ansible_pkg_mgr in ['dnf', 'dnf5', 'yum']
+  ansible.builtin.package:
+    name: awscli
+  failed_when: false
+
+# ---- EL point-release drift: exact kernel-devel from the distro vault ----
+- name: "deps | check exact kernel-devel installed (RPM distros)"
+  when: ansible_pkg_mgr in ['dnf', 'dnf5', 'yum']
+  ansible.builtin.command: rpm -q "kernel-devel-{{ ansible_kernel }}"
+  register: kdevel_check
+  changed_when: false
+  failed_when: false
+
+- name: "deps | EL vault fallback for exact kernel-devel"
+  when:
+    - ansible_pkg_mgr in ['dnf', 'dnf5', 'yum']
+    - kdevel_check.rc != 0
+    - ansible_distribution | lower in ['rocky', 'almalinux']
+  vars:
+    el_pr: "{{ ansible_kernel | regex_search('el[0-9]+_[0-9]+') | regex_replace('el', '') | regex_replace('_', '.') }}"
+    vault_url: >-
+      {{ (ansible_distribution | lower == 'rocky')
+         | ternary('https://dl.rockylinux.org/vault/rocky/' ~ el_pr ~ '/AppStream/' ~ ansible_architecture ~ '/os/Packages/k/kernel-devel-' ~ ansible_kernel ~ '.rpm',
+                   'https://repo.almalinux.org/vault/' ~ el_pr ~ '/AppStream/' ~ ansible_architecture ~ '/os/Packages/kernel-devel-' ~ ansible_kernel ~ '.rpm') }}
+  ansible.builtin.package:
+    name: "{{ vault_url }}"
+    disable_gpg_check: true
+  failed_when: false
+
+# ---- AWS CLI v2 bundle fallback (RHEL-family: awscli is EPEL-only) ----
+- name: "deps | check aws CLI present"
+  ansible.builtin.shell: command -v aws
+  register: aws_check
+  changed_when: false
+  failed_when: false
+
+- name: "deps | AWS CLI v2 bundle fallback"
+  when: aws_check.rc != 0
+  block:
+    - name: "deps | ensure unzip"
+      ansible.builtin.package:
+        name: unzip
+      failed_when: false
+
+    - name: "deps | download AWS CLI v2 bundle"
+      ansible.builtin.get_url:
+        url: "https://awscli.amazonaws.com/awscli-exe-linux-{{ ansible_architecture }}.zip"
+        dest: /tmp/awscliv2.zip
+        mode: "0644"
+
+    - name: "deps | unpack AWS CLI v2 bundle"
+      ansible.builtin.unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: true
+
+    - name: "deps | install AWS CLI v2"
+      ansible.builtin.command: /tmp/aws/install
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: "deps | clean bundle artifacts"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: [/tmp/awscliv2.zip, /tmp/aws]
+
+# ---- gates (parity with the bash FATALs) ----
+- name: "deps | gate: jq must be present"
+  ansible.builtin.shell: command -v jq
+  changed_when: false
+
+- name: "deps | gate: aws must be present when S3 install source configured"
+  when: weka_install_s3 | length > 0
+  ansible.builtin.shell: command -v aws
+  changed_when: false

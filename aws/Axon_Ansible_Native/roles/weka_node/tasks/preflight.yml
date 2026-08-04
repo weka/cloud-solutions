@@ -1,0 +1,57 @@
+---
+# Node/AMI conformance preflight -- native port of
+# the validated conformance checker. Checks accumulate into pf_results
+# ({level, msg}); this file initializes, includes the check groups, prints
+# the same [PASS]/[WARN]/[FAIL] report, and gates on any FAIL.
+
+- name: "preflight | init result accumulator"
+  ansible.builtin.set_fact:
+    pf_results: []
+
+# is a WEKA cluster already running here? (DPDK hides NICs/NVMe from sysfs,
+# so several hardware checks downgrade to WARN on active members)
+- name: "preflight | detect running weka containers"
+  ansible.builtin.shell: |
+    command -v weka >/dev/null 2>&1 && weka local ps 2>/dev/null | grep -qi Running && echo 1 || echo 0
+  register: pf_weka_active_probe
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | set weka_active fact"
+  ansible.builtin.set_fact:
+    pf_weka_active: "{{ pf_weka_active_probe.stdout | trim == '1' }}"
+
+- name: "preflight | OS checks (kernel, headers, compiler, tooling, SELinux)"
+  ansible.builtin.include_tasks: preflight_os.yml
+
+- name: "preflight | AWS checks (IMDS, hop limit, service reachability)"
+  ansible.builtin.include_tasks: preflight_aws.yml
+
+- name: "preflight | hardware checks (NICs, NVMe, cores, memory, disk)"
+  ansible.builtin.include_tasks: preflight_hw.yml
+
+# ---------- report + gate (same output contract as the bash preflight) ----------
+
+- name: "preflight | counts"
+  ansible.builtin.set_fact:
+    pf_pass: "{{ pf_results | selectattr('level', 'eq', 'PASS') | list | length }}"
+    pf_warn: "{{ pf_results | selectattr('level', 'eq', 'WARN') | list | length }}"
+    pf_fail: "{{ pf_results | selectattr('level', 'eq', 'FAIL') | list | length }}"
+
+- name: "preflight | report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ (['##### WEKA preflight -- ' ~ inventory_hostname ~ ' #####']
+          + (pf_results | map(attribute='level')
+             | zip(pf_results | map(attribute='msg'))
+             | map('join', '] ') | map('regex_replace', '^', '[') | list)
+          + ['##### RESULT: ' ~ pf_pass ~ ' pass / ' ~ pf_warn ~ ' warn / ' ~ pf_fail ~ ' fail #####']
+         ) | join('\n') }}
+
+- name: "preflight | gate on FAILs"
+  ansible.builtin.assert:
+    that: pf_fail | int == 0
+    fail_msg: >-
+      {{ pf_fail }} preflight FAILure(s) on {{ inventory_hostname }} --
+      see the [FAIL] lines above. Warnings do not block.
+    success_msg: "preflight passed on {{ inventory_hostname }} ({{ pf_pass }} pass / {{ pf_warn }} warn)"

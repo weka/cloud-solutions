@@ -1,0 +1,60 @@
+---
+# membership.yml -- shared pre-play: classify inventory hosts into
+# weka_members / weka_candidates by comparing each host's mgmt IP against the
+# cluster's backend container IPs. Imported by the day-2 playbooks.
+#
+# Sets: weka_topology (per host), is_member (per host),
+# groups weka_members / weka_candidates, and cluster facts on the primary.
+
+- name: Resolve cluster membership
+  hosts: weka_cluster
+  gather_facts: true
+  tasks:
+    - name: "membership | discover topology"
+      ansible.builtin.include_role:
+        name: weka_node
+      vars:
+        weka_node_action: discover
+
+    - name: "membership | find a node with a cluster view"
+      # any host whose weka CLI reports a cluster works as the vantage point
+      ansible.builtin.shell: weka status >/dev/null 2>&1 && echo yes || echo no
+      register: has_cluster
+      changed_when: false
+
+    - name: "membership | gate: at least one member must exist"
+      run_once: true
+      ansible.builtin.assert:
+        that: groups['weka_cluster'] | map('extract', hostvars, ['has_cluster', 'stdout']) | select('eq', 'yes') | list | length > 0
+        fail_msg: no inventory host has a cluster view -- is the cluster up?
+
+    - name: "membership | elect vantage host (any host with a cluster view)"
+      run_once: true
+      ansible.builtin.set_fact:
+        weka_vantage: >-
+          {{ groups['weka_cluster'] | sort | map('extract', hostvars)
+             | selectattr('has_cluster.stdout', 'eq', 'yes')
+             | map(attribute='inventory_hostname') | list | sort | first }}
+
+    - name: "membership | read backend member IPs from the cluster"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.shell: |
+        weka cluster container -J | jq -r '.[] | select(.mode=="backend") | .ips[0]' | sort -u
+      register: member_ips_probe
+      changed_when: false
+
+    - name: "membership | classify this host"
+      ansible.builtin.set_fact:
+        is_member: "{{ weka_topology.mgmt_ip in member_ips_probe.stdout_lines }}"
+
+    - name: "membership | build groups"
+      ansible.builtin.group_by:
+        key: "{{ is_member | ternary('weka_members', 'weka_candidates') }}"
+
+    - name: "membership | summary"
+      run_once: true
+      ansible.builtin.debug:
+        msg: >-
+          members: {{ groups['weka_members'] | default([]) | sort | join(', ') }} |
+          candidates: {{ groups['weka_candidates'] | default([]) | sort | join(', ') }}

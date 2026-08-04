@@ -1,0 +1,134 @@
+---
+# OS-side checks: kernel ceiling, kernel headers (incl. EL vault fallback),
+# kernel-matching compiler, awscli/jq availability, SELinux mode.
+# Shell probes are kept where the validated bash used probes; facts replace
+# shell only where they are exact equivalents.
+
+# ---------- 1. kernel ceiling ----------
+- name: "preflight | kernel line"
+  ansible.builtin.set_fact:
+    pf_kline: "{{ ansible_kernel | regex_search('^[0-9]+\\.[0-9]+') }}"
+
+- name: "preflight | check kernel ceiling"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (pf_kline is version(weka_max_kernel, '<='))
+         | ternary({'level': 'PASS', 'msg': 'kernel ' ~ ansible_kernel ~ ' is <= ' ~ weka_max_kernel ~ ' (WEKA driver build ceiling)'},
+                   {'level': 'FAIL', 'msg': 'kernel ' ~ ansible_kernel ~ ' EXCEEDS WEKA ceiling ' ~ weka_max_kernel ~ ' -- WEKA drivers will not compile. Pin an older kernel or use a different AMI'}) ] }}
+
+# ---------- 2. kernel headers (present / installable / EL vault) ----------
+- name: "preflight | probe kernel headers"
+  ansible.builtin.shell: |
+    KREL="{{ ansible_kernel }}"
+    if [ -d "/usr/src/linux-headers-${KREL}" ] || [ -d "/usr/src/kernels/${KREL}" ]; then
+      echo "present"; exit 0
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get update -q >/dev/null 2>&1 || true
+      apt-get install --dry-run -yq "linux-headers-${KREL}" >/dev/null 2>&1 && { echo "installable"; exit 0; }
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+      { dnf install --assumeno "kernel-devel-${KREL}" >/dev/null 2>&1 || dnf list "kernel-devel-${KREL}" >/dev/null 2>&1 \
+        || yum list "kernel-devel-${KREL}" >/dev/null 2>&1; } && { echo "installable"; exit 0; }
+      # EL point-release drift: probe the distro vault (installer self-installs from it)
+      ID=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+      PR=$(echo "$KREL" | grep -oE 'el[0-9]+_[0-9]+' | sed 's/el//; s/_/./')
+      case "$ID" in
+        rocky)     VURL="https://dl.rockylinux.org/vault/rocky/${PR}/AppStream/$(uname -m)/os/Packages/k/kernel-devel-${KREL}.rpm" ;;
+        almalinux) VURL="https://repo.almalinux.org/vault/${PR}/AppStream/$(uname -m)/os/Packages/kernel-devel-${KREL}.rpm" ;;
+        *)         VURL="" ;;
+      esac
+      [ -n "$VURL" ] && curl -sf -m 10 -r 0-0 -o /dev/null "$VURL" && { echo "vault:${ID}"; exit 0; }
+    fi
+    echo "missing"
+  register: pf_headers
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check kernel headers"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ {'present':  {'level': 'PASS', 'msg': 'kernel headers for ' ~ ansible_kernel ~ ' present'},
+                         'installable': {'level': 'PASS', 'msg': 'kernel headers for ' ~ ansible_kernel ~ ' installable via package manager'},
+                         'missing':  {'level': 'FAIL', 'msg': 'kernel headers for ' ~ ansible_kernel ~ ' neither present nor installable -- WEKA driver build will fail. Bake kernel-devel matching the AMI kernel into the image, or update+reboot to the current kernel'}
+                        }[pf_headers.stdout | trim]
+                        | default({'level': 'PASS', 'msg': 'kernel-devel-' ~ ansible_kernel ~ ': dropped from live repos (point-release drift) but available in the ' ~ (pf_headers.stdout | trim | regex_replace('^vault:', '')) ~ ' vault (installer self-installs it)'}) ] }}
+
+# ---------- 3. compiler matching the kernel build + make ----------
+- name: "preflight | probe kernel compiler + make"
+  ansible.builtin.shell: |
+    probe_pkg() {
+      if command -v apt-get >/dev/null 2>&1; then apt-get install --dry-run -yq "$1" >/dev/null 2>&1
+      elif command -v dnf >/dev/null 2>&1; then dnf install --assumeno "$1" >/dev/null 2>&1 || dnf list "$1" >/dev/null 2>&1
+      elif command -v yum >/dev/null 2>&1; then yum list "$1" >/dev/null 2>&1
+      else return 1; fi
+    }
+    KGCC=$(grep -oE 'gcc-[0-9]+' /proc/version | head -1 || true)
+    if [ -n "$KGCC" ]; then
+      if command -v "$KGCC" >/dev/null 2>&1; then echo "gcc:present:${KGCC}"
+      elif probe_pkg "$KGCC"; then echo "gcc:installable:${KGCC}"
+      else echo "gcc:missing:${KGCC}"; fi
+    else
+      if command -v gcc >/dev/null 2>&1; then echo "gcc:present:gcc"
+      elif probe_pkg gcc; then echo "gcc:installable:gcc"
+      else echo "gcc:missing:gcc"; fi
+    fi
+    { command -v make >/dev/null 2>&1 || probe_pkg make; } && echo "make:ok" || echo "make:missing"
+  register: pf_compiler
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check compiler"
+  vars:
+    gccline: "{{ pf_compiler.stdout_lines | select('match', '^gcc:') | first | default('gcc:missing:gcc') }}"
+    gccstate: "{{ gccline.split(':')[1] }}"
+    gccname: "{{ gccline.split(':')[2] }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results
+         + [ {'present':     {'level': 'PASS', 'msg': 'kernel compiler ' ~ gccname ~ ' present'},
+              'installable': {'level': 'PASS', 'msg': 'kernel compiler ' ~ gccname ~ ' installable'},
+              'missing':     {'level': 'FAIL', 'msg': 'kernel was built with ' ~ gccname ~ ', which is neither installed nor installable'}}[gccstate] ]
+         + (('make:missing' in pf_compiler.stdout)
+            | ternary([{'level': 'FAIL', 'msg': 'make neither present nor installable'}],
+                      [{'level': 'PASS', 'msg': 'make present or installable'}])) }}
+
+# ---------- 4. tooling: awscli (with v2-bundle fallback), jq ----------
+- name: "preflight | probe awscli + jq"
+  ansible.builtin.shell: |
+    probe_pkg() {
+      if command -v apt-get >/dev/null 2>&1; then apt-get install --dry-run -yq "$1" >/dev/null 2>&1
+      elif command -v dnf >/dev/null 2>&1; then dnf install --assumeno "$1" >/dev/null 2>&1 || dnf list "$1" >/dev/null 2>&1
+      elif command -v yum >/dev/null 2>&1; then yum list "$1" >/dev/null 2>&1
+      else return 1; fi
+    }
+    if command -v aws >/dev/null 2>&1; then echo "aws:present"
+    elif probe_pkg awscli; then echo "aws:installable"
+    elif curl -sf -m 8 -r 0-0 -o /dev/null "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip"; then echo "aws:bundle"
+    else echo "aws:missing"; fi
+    if command -v jq >/dev/null 2>&1; then echo "jq:present"
+    elif probe_pkg jq; then echo "jq:installable"
+    else echo "jq:missing"; fi
+  register: pf_tools
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check tooling"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results
+         + [ {'aws:present':     {'level': 'PASS', 'msg': 'aws present'},
+              'aws:installable': {'level': 'PASS', 'msg': 'aws installable via package manager'},
+              'aws:bundle':      {'level': 'PASS', 'msg': 'aws: not in distro repos; official AWS CLI v2 bundle reachable (installer self-installs it)'},
+              'aws:missing':     {'level': 'FAIL', 'msg': 'aws neither present nor installable (needed by installer/day-2)'}}[pf_tools.stdout_lines | select('match', '^aws:') | first] ]
+         + [ {'jq:present':     {'level': 'PASS', 'msg': 'jq present'},
+              'jq:installable': {'level': 'PASS', 'msg': 'jq installable via package manager'},
+              'jq:missing':     {'level': 'FAIL', 'msg': 'jq neither present nor installable (needed by installer/day-2)'}}[pf_tools.stdout_lines | select('match', '^jq:') | first] ] }}
+
+# ---------- 8b. SELinux (facts are exact here) ----------
+- name: "preflight | check SELinux"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (ansible_selinux.status | default('disabled') == 'enabled'
+                         and ansible_selinux.mode | default('') == 'enforcing')
+         | ternary({'level': 'WARN', 'msg': 'SELinux is Enforcing -- set permissive for the first install run (setenforce 0 + SELINUX=permissive in /etc/selinux/config); revisit enforcing after validation'},
+                   {'level': 'PASS', 'msg': 'SELinux: ' ~ (ansible_selinux.mode | default(ansible_selinux.status | default('not present')))}) ] }}

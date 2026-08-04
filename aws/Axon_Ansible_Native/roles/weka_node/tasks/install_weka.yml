@@ -1,0 +1,103 @@
+---
+# WEKA agent install. Idempotent: skips download + install entirely when the
+# weka CLI is already present. Source order (parity with the bash installer):
+#   1. weka_install_s3  (s3://bucket/key, downloaded with the instance role)
+#   2. weka_install_url (get.weka.io or presigned URL)
+#   3. neither + agent absent = hard fail
+
+- name: "weka | check weka CLI present"
+  ansible.builtin.shell: command -v weka
+  register: weka_check
+  changed_when: false
+  failed_when: false
+
+- name: "weka | agent already present, skipping install"
+  when: weka_check.rc == 0
+  ansible.builtin.debug:
+    msg: weka agent present, skipping install
+
+- name: "weka | download + install"
+  when: weka_check.rc != 0
+  block:
+    - name: "weka | gate: an install source must be configured"
+      ansible.builtin.assert:
+        that: >-
+          (weka_dist_ip is defined and weka_dist_ip | length > 0)
+          or (weka_install_s3 | length > 0) or (weka_install_url | length > 0)
+        fail_msg: >-
+          weka agent not present and no install source configured
+          (weka_install_s3 / weka_install_url)
+
+    - name: "weka | download distribution from the cluster dist endpoint"
+      when: weka_dist_ip is defined and weka_dist_ip | length > 0
+      ansible.builtin.shell: |
+        set -e
+        curl -skf -m 30 "https://{{ weka_dist_ip }}:{{ base_port_drives }}/dist/v1/install" -o /tmp/weka_dist \
+          || curl -sf -m 30 "http://{{ weka_dist_ip }}:{{ base_port_drives }}/dist/v1/install" -o /tmp/weka_dist
+      args:
+        creates: /tmp/weka_dist
+
+    - name: "weka | download distribution from S3 (instance role)"
+      when: (weka_dist_ip is not defined or weka_dist_ip | length == 0) and weka_install_s3 | length > 0
+      ansible.builtin.command: aws s3 cp {{ weka_install_s3 }} /tmp/weka_dist --no-progress
+      args:
+        creates: /tmp/weka_dist
+      register: s3_dl
+      failed_when: s3_dl.rc is defined and s3_dl.rc != 0
+
+    - name: "weka | download distribution from URL"
+      when: >-
+        (weka_dist_ip is not defined or weka_dist_ip | length == 0)
+        and weka_install_s3 | length == 0 and weka_install_url | length > 0
+      ansible.builtin.get_url:
+        url: "{{ weka_install_url }}"
+        dest: /tmp/weka_dist
+        mode: "0644"
+
+    - name: "weka | install (self-extracting script or tarball)"
+      # keep the validated type detection + install invocation as one unit
+      ansible.builtin.shell: |
+        set -e
+        cd /tmp
+        if file weka_dist | grep -qi 'shell script\|ascii text'; then
+          sh weka_dist
+        else
+          mkdir -p weka_dist_x
+          tar xf weka_dist -C weka_dist_x --strip-components=1
+          cd weka_dist_x && ./install.sh
+        fi
+      args:
+        creates: /usr/bin/weka
+
+# the dist installer enables but does not reliably START the agent on all
+# distros/shells (observed live on Rocky 9.5 over aws_ssm) -- ensure it
+- name: "weka | ensure weka-agent service is running"
+  ansible.builtin.service:
+    name: weka-agent
+    state: started
+    enabled: true
+
+# the agent's first init builds a 2GB logs.loop backing file; touching weka
+# state before it answers (e.g. cleanup's 'weka local rm') truncates it and
+# the agent crash-loops forever (observed live on Rocky, all nodes) -- wait
+- name: "weka | wait for the agent to answer"
+  ansible.builtin.command: weka local ps
+  register: agent_ready
+  until: agent_ready.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: "weka | gate: weka CLI must be installed"
+  ansible.builtin.shell: command -v weka
+  changed_when: false
+
+- name: "weka | report version"
+  ansible.builtin.command: weka version
+  register: weka_ver
+  changed_when: false
+  failed_when: false
+
+- name: "weka | version"
+  ansible.builtin.debug:
+    msg: "weka agent: {{ (weka_ver.stdout_lines | default([]) + ['unknown']) | first }}"

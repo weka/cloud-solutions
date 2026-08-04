@@ -1,0 +1,30 @@
+---
+# day2-status.yml -- membership vs inventory, protection, baseline
+
+- import_playbook: membership.yml
+
+- name: WEKA day-2 status
+  hosts: weka_members
+  gather_facts: false
+  vars:
+    weka_primary: "{{ weka_vantage }}"
+  tasks:
+    - name: "status | cluster status + baseline"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        weka status | head -12
+        echo "---"
+        echo "baseline: $(aws ssm get-parameter --region {{ aws_region }} \
+          --name /weka/{{ cluster_name }}/baseline --query Parameter.Value --output text 2>/dev/null || echo '<missing>')"
+      register: st
+      changed_when: false
+
+    - name: "status | report"
+      run_once: true
+      ansible.builtin.debug:
+        msg: |
+          {{ st.stdout }}
+
+          members    : {{ groups['weka_members'] | default([]) | sort | join(', ') }}
+          candidates : {{ groups['weka_candidates'] | default([]) | sort | join(', ') }}

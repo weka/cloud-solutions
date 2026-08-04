@@ -1,0 +1,73 @@
+---
+# fs.yml -- filesystem + POSIX mounts (OCI-repo parity-plus): create a
+# filesystem (idempotent) and mount it on every member node via the local
+# frontend. The converged cluster is not USABLE until this happens.
+#
+#   ansible-playbook -i <inv> -e weka_fs_name=default -e weka_fs_size_gb=100 fs.yml
+
+- import_playbook: membership.yml
+
+- name: WEKA filesystem
+  hosts: weka_members
+  gather_facts: false
+  vars:
+    weka_primary: "{{ weka_vantage }}"
+    fs_name: "{{ weka_fs_name | default('default') }}"
+    fs_size_gb: "{{ weka_fs_size_gb | default(100) }}"
+    fs_mountpoint: "{{ weka_fs_mountpoint | default('/mnt/weka') }}"
+  tasks:
+    - name: "fs | login (secret-first)"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        set -e
+        CREDS=$(aws secretsmanager get-secret-value --region {{ aws_region }} \
+          --secret-id weka/{{ cluster_name }}/admin --query SecretString --output text 2>/dev/null) \
+          && weka user login "$(echo "$CREDS" | jq -r .username)" "$(echo "$CREDS" | jq -r .password)" \
+          || weka user login "{{ weka_user }}" "{{ weka_pass }}"
+      changed_when: false
+      no_log: true
+
+    - name: "fs | ensure filesystem group"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        weka fs group -J | jq -e '.[] | select(.name=="default")' >/dev/null 2>&1 \
+          || weka fs group create default
+      register: fsg
+      changed_when: "'default' in fsg.stdout"
+
+    - name: "fs | ensure filesystem {{ fs_name }}"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        weka fs -J | jq -e --arg n "{{ fs_name }}" '.[] | select(.name==$n)' >/dev/null 2>&1 \
+          || weka fs create "{{ fs_name }}" default "{{ fs_size_gb }}GB"
+      register: fsc
+      changed_when: "'{{ fs_name }}' in fsc.stdout"
+
+    - name: "fs | check mount on every member"
+      ansible.builtin.shell: grep -q " {{ fs_mountpoint }} wekafs" /proc/mounts && echo mounted || echo absent
+      register: mnt
+      changed_when: false
+
+    - name: "fs | mountpoint"
+      when: mnt.stdout | trim == 'absent'
+      ansible.builtin.file:
+        path: "{{ fs_mountpoint }}"
+        state: directory
+        mode: "0755"
+
+    - name: "fs | mount wekafs via local frontend"
+      when: mnt.stdout | trim == 'absent'
+      ansible.builtin.command: mount -t wekafs {{ fs_name }} {{ fs_mountpoint }}
+      changed_when: true
+
+    - name: "fs | verify"
+      ansible.builtin.shell: df -h {{ fs_mountpoint }} | tail -1
+      register: dfout
+      changed_when: false
+
+    - name: "fs | report"
+      ansible.builtin.debug:
+        msg: "{{ dfout.stdout }}"

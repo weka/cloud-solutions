@@ -1,0 +1,196 @@
+---
+# scale-in.yml -- graceful serialized removal of ONE member node.
+#
+#   ansible-playbook -i <inv> -e weka_target=<inventory-hostname> scale-in.yml
+#
+# Guards (all before any action): target must be a member; the ORIGINAL
+# cluster size is the floor (baseline SSM parameter -- the floor never
+# moves); cluster must be OK + fully protected. Then: drain drives
+# (deactivate ids -> poll INACTIVE -> remove uuids), deactivate + remove
+# containers, wipe the node locally, re-tag so discovery never re-adopts.
+# Optional Slurm drain first: -e slurm_controller=<host> (UNVALIDATED -- no
+# Slurm in the test environment; review before first production use).
+
+- import_playbook: membership.yml
+
+- name: Scale-in guards
+  hosts: weka_members
+  gather_facts: false
+  vars:
+    weka_primary: "{{ groups['weka_members'] | sort | first }}"
+  tasks:
+    - name: "scale-in | validate target"
+      run_once: true
+      ansible.builtin.assert:
+        that:
+          - weka_target is defined
+          - weka_target in (groups['weka_members'] | default([]))
+        fail_msg: >-
+          pass -e weka_target=<inventory-hostname of a MEMBER>
+          (members: {{ groups['weka_members'] | default([]) | sort | join(', ') }})
+
+    - name: "scale-in | primary must not be the target"
+      run_once: true
+      ansible.builtin.set_fact:
+        weka_op_primary: >-
+          {{ (groups['weka_members'] | sort | reject('eq', weka_target) | list | first) }}
+
+    - name: "scale-in | read the floor (baseline parameter)"
+      run_once: true
+      delegate_to: "{{ weka_op_primary }}"
+      ansible.builtin.shell: |
+        aws ssm get-parameter --region {{ aws_region }} \
+          --name /weka/{{ cluster_name }}/baseline --query Parameter.Value --output text \
+          | grep -oE '"original_nodes": *[0-9]+' | grep -oE '[0-9]+'
+      register: floor_probe
+      changed_when: false
+      failed_when: false
+
+    - name: "scale-in | enforce the floor"
+      run_once: true
+      vars:
+        floor: "{{ (floor_probe.stdout | trim) if floor_probe.rc == 0 else (original_size | default(0)) }}"
+      ansible.builtin.assert:
+        that:
+          - floor | int > 0
+          - (groups['weka_members'] | length - 1) >= (floor | int)
+        fail_msg: >-
+          REFUSED: removing {{ weka_target }} would shrink the cluster to
+          {{ groups['weka_members'] | length - 1 }} nodes, below the original
+          size floor of {{ floor }} (WEKA does not support scale-in below the
+          original cluster size). {{ 'Baseline parameter missing -- pass -e original_size=<n>.' if floor | int == 0 else '' }}
+
+    - name: "scale-in | cluster must be OK + fully protected"
+      run_once: true
+      delegate_to: "{{ weka_op_primary }}"
+      ansible.builtin.shell: |
+        set -e
+        S=$(weka status -J)
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ]
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ]
+      changed_when: false
+
+    - name: "scale-in | optional Slurm drain (UNVALIDATED)"
+      run_once: true
+      when: slurm_controller is defined
+      delegate_to: "{{ slurm_controller | default(inventory_hostname) }}"
+      ansible.builtin.shell: |
+        scontrol update NodeName={{ hostvars[weka_target].ansible_hostname }} State=DRAIN Reason="weka scale-in"
+        for i in $(seq 1 {{ slurm_drain_retries | default(40) }}); do
+          [ "$(squeue --nodelist={{ hostvars[weka_target].ansible_hostname }} --noheader | wc -l)" = "0" ] && exit 0
+          sleep {{ slurm_drain_delay | default(30) }}
+        done
+        echo "slurm drain timed out" >&2; exit 1
+      changed_when: true
+
+# ---- cluster-side removal (driven from a surviving member) ----
+- name: Remove target from the cluster
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "scale-in | login (secret-first)"
+      run_once: true
+      delegate_to: "{{ weka_op_primary }}"
+      ansible.builtin.shell: |
+        set -e
+        CREDS=$(aws secretsmanager get-secret-value --region {{ aws_region }} \
+          --secret-id weka/{{ cluster_name }}/admin --query SecretString --output text 2>/dev/null) \
+          && weka user login "$(echo "$CREDS" | jq -r .username)" "$(echo "$CREDS" | jq -r .password)" \
+          || weka user login "{{ weka_user }}" "{{ weka_pass }}"
+      changed_when: false
+      no_log: true
+
+    - name: "scale-in | drain + remove drives, deactivate + remove containers"
+      run_once: true
+      delegate_to: "{{ weka_op_primary }}"
+      vars:
+        target_ip: "{{ hostvars[weka_target].weka_topology.mgmt_ip }}"
+      ansible.builtin.shell: |
+        set -e
+        IP="{{ target_ip }}"
+        HOST="ip-$(echo "$IP" | tr . -)"
+        CIDS=$(weka cluster container -J | jq -r --arg ip "$IP" \
+          '.[] | select(.mode=="backend" and (.ips | index($ip))) | .host_id | capture("<(?<n>[0-9]+)>").n')
+        [ -n "$CIDS" ] || { echo "no containers found for $IP -- not a member?"; exit 1; }
+        DRIVE_IDS=$(weka cluster drive -J | jq -r --arg h "$HOST" \
+          '.[] | select(.hostname==$h) | .disk_id | capture("<(?<n>[0-9]+)>").n' | tr '\n' ' ')
+        DRIVE_UUIDS=$(weka cluster drive -J | jq -r --arg h "$HOST" \
+          '.[] | select(.hostname==$h) | .uuid' | tr '\n' ' ')
+        if [ -n "$(echo "$DRIVE_IDS" | tr -d ' ')" ]; then
+          echo "deactivating drives: $DRIVE_IDS"
+          weka cluster drive deactivate $DRIVE_IDS --force
+          DEADLINE=$(( $(date +%s) + {{ drain_timeout | default(7200) }} ))
+          while :; do
+            REMAINING=$(weka cluster drive -J | jq --arg h "$HOST" \
+              '[.[] | select(.hostname==$h and .status!="INACTIVE" and .status!="DOWN")] | length')
+            [ "$REMAINING" = "0" ] && break
+            [ $(date +%s) -gt $DEADLINE ] && { echo "drive drain timed out" >&2; exit 1; }
+            echo "  $REMAINING drive(s) still draining..."; sleep 20
+          done
+          echo "removing drained drives"
+          weka cluster drive remove $DRIVE_UUIDS --force
+        fi
+        for C in $CIDS; do weka cluster container deactivate "$C" || true; done
+        sleep 10
+        for C in $CIDS; do
+          weka cluster container remove "$C" || weka cluster container remove "$C" --force \
+            || echo "WARN: remove of container $C reported failure (may already be gone)"
+        done
+        LEFT=$(weka cluster container -J | jq --arg ip "$IP" '[.[] | select(.ips | index($ip))] | length')
+        [ "$LEFT" = "0" ] || { echo "ERROR: $LEFT container(s) still registered for $IP" >&2; exit 1; }
+        echo "cluster-side removal complete"
+      register: removal
+      changed_when: true
+
+    - name: "scale-in | removal log"
+      run_once: true
+      ansible.builtin.debug:
+        msg: "{{ removal.stdout }}"
+
+# ---- node-side wipe + re-tag ----
+- name: Wipe the removed node
+  hosts: "{{ weka_target }}"
+  gather_facts: false
+  tasks:
+    - name: "scale-in | local wipe"
+      ansible.builtin.include_role:
+        name: weka_node
+      vars:
+        weka_node_action: drain_local
+
+    - name: "scale-in | re-tag so discovery never re-adopts"
+      ansible.builtin.command: >-
+        aws ec2 create-tags --region {{ aws_region }}
+        --resources {{ inventory_hostname }}
+        --tags Key=weka-cluster,Value={{ cluster_name }}-removed Key=weka-drain,Value=done
+      changed_when: true
+
+# ---- verify ----
+- name: Post scale-in
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "scale-in | wait for cluster OK + fully protected"
+      run_once: true
+      delegate_to: "{{ weka_op_primary }}"
+      ansible.builtin.shell: |
+        S=$(weka status -J)
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ] || exit 1
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ] || exit 1
+      register: postok
+      until: postok.rc == 0
+      retries: 90
+      delay: 20
+      changed_when: false
+
+    - name: "scale-in | final status"
+      run_once: true
+      delegate_to: "{{ weka_op_primary }}"
+      ansible.builtin.command: weka status
+      register: final
+      changed_when: false
+
+    - name: "scale-in | report"
+      run_once: true
+      ansible.builtin.debug:
+        msg: "{{ final.stdout }}"

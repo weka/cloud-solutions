@@ -1,0 +1,111 @@
+---
+# AWS-side checks: IMDSv2, hop limit, service endpoint reachability.
+
+# ---------- 5. IMDSv2 + hop limit ----------
+- name: "preflight | probe IMDSv2"
+  ansible.builtin.shell: |
+    TOK=$(curl -sf -m 5 -X PUT http://169.254.169.254/latest/api/token \
+          -H "X-aws-ec2-metadata-token-ttl-seconds: 60" || true)
+    [ -n "$TOK" ] || { echo "imds:unavailable"; exit 0; }
+    echo "imds:ok"
+    IID=$(curl -sf -H "X-aws-ec2-metadata-token: $TOK" http://169.254.169.254/latest/meta-data/instance-id)
+    REGION=$(curl -sf -H "X-aws-ec2-metadata-token: $TOK" http://169.254.169.254/latest/meta-data/placement/region)
+    echo "region:${REGION}"
+    if command -v aws >/dev/null 2>&1; then
+      HOP=$(aws ec2 describe-instances --region "$REGION" --instance-ids "$IID" \
+        --query 'Reservations[0].Instances[0].MetadataOptions.HttpPutResponseHopLimit' --output text 2>/dev/null || echo "?")
+      echo "hop:${HOP}"
+    else
+      echo "hop:noaws"
+    fi
+    # mgmt ENI position (needs the token, so probed here)
+    FOUND=0
+    for mac in $(curl -sf -H "X-aws-ec2-metadata-token: $TOK" http://169.254.169.254/latest/meta-data/network/interfaces/macs/ | tr -d '/'); do
+      card=$(curl -sf -H "X-aws-ec2-metadata-token: $TOK" "http://169.254.169.254/latest/meta-data/network/interfaces/macs/$mac/network-card" 2>/dev/null || echo 0)
+      dev=$(curl -sf -H "X-aws-ec2-metadata-token: $TOK" "http://169.254.169.254/latest/meta-data/network/interfaces/macs/$mac/device-number")
+      [ "$card" = "{{ mgmt_network_card }}" ] && [ "$dev" = "{{ mgmt_device_index }}" ] && FOUND=1
+    done
+    echo "mgmt_eni:${FOUND}"
+  register: pf_imds
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check IMDSv2"
+  ansible.builtin.set_fact:
+    pf_region: "{{ pf_imds.stdout_lines | select('match', '^region:') | map('regex_replace', '^region:', '') | first | default('') }}"
+    pf_results: >-
+      {{ pf_results + (('imds:ok' in pf_imds.stdout)
+         | ternary([{'level': 'PASS', 'msg': 'IMDSv2 token obtained'}],
+                   [{'level': 'FAIL', 'msg': 'IMDSv2 unavailable -- installer topology discovery will fail'}])) }}
+
+- name: "preflight | check hop limit"
+  when: "'imds:ok' in pf_imds.stdout"
+  vars:
+    hop: "{{ pf_imds.stdout_lines | select('match', '^hop:') | map('regex_replace', '^hop:', '') | first | default('?') }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (hop == 'noaws')
+         | ternary({'level': 'WARN', 'msg': 'aws CLI absent -- skipping IMDS hop-limit check (verify HttpPutResponseHopLimit=2 in template)'},
+           (hop == '?')
+           | ternary({'level': 'WARN', 'msg': 'could not read IMDS hop limit (IAM ec2:DescribeInstances missing?)'},
+             (hop | int >= 2)
+             | ternary({'level': 'PASS', 'msg': 'IMDS hop limit ' ~ hop ~ ' >= 2 (required by WEKA containers)'},
+                       {'level': 'FAIL', 'msg': 'IMDS hop limit ' ~ hop ~ ' < 2 -- WEKA containers will fail IMDS. Set HttpPutResponseHopLimit=2 in the launch template'}))) ] }}
+
+- name: "preflight | check mgmt ENI position"
+  when: "'imds:ok' in pf_imds.stdout"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + (('mgmt_eni:1' in pf_imds.stdout)
+         | ternary([{'level': 'PASS', 'msg': 'mgmt ENI found at card ' ~ mgmt_network_card ~ ' / dev ' ~ mgmt_device_index}],
+                   [{'level': 'FAIL', 'msg': 'no ENI at card ' ~ mgmt_network_card ~ ' / dev ' ~ mgmt_device_index ~ ' -- must match installer MGMT_* settings'}])) }}
+
+# ---------- 10. AWS service reachability ----------
+- name: "preflight | probe service endpoints"
+  when: pf_region | length > 0
+  ansible.builtin.shell: |
+    for svc in s3 secretsmanager ssm; do
+      # no -f: ANY http response (404 included) proves reachability
+      if curl -s -m 8 -o /dev/null "https://${svc}.{{ pf_region }}.amazonaws.com"; then
+        echo "${svc}:ok"
+      else
+        echo "${svc}:unreachable"
+      fi
+    done
+  register: pf_endpoints
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check service endpoints"
+  when: pf_region | length > 0
+  vars:
+    ep_checks: >-
+      {%- set out = [] -%}
+      {%- for line in pf_endpoints.stdout_lines -%}
+        {%- set svc = line.split(':')[0] -%}
+        {%- if line.endswith(':ok') -%}
+          {%- set _ = out.append({'level': 'PASS', 'msg': svc ~ '.' ~ pf_region ~ '.amazonaws.com reachable'}) -%}
+        {%- elif svc == 'ssm' -%}
+          {%- set _ = out.append({'level': 'WARN', 'msg': 'ssm endpoint probe failed (ignore if this ran via SSM)'}) -%}
+        {%- else -%}
+          {%- set _ = out.append({'level': 'FAIL', 'msg': svc ~ '.' ~ pf_region ~ '.amazonaws.com unreachable -- add a VPC endpoint or NAT (installer/day-2 needs it)'}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.set_fact:
+    pf_results: "{{ pf_results + ep_checks }}"
+
+# ---------- 11. leftover weka state ----------
+- name: "preflight | probe leftover weka containers"
+  ansible.builtin.shell: |
+    command -v weka >/dev/null 2>&1 && weka local ps 2>/dev/null | grep -qi drives0 && echo present || echo clean
+  register: pf_leftover
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check leftover weka state"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + ((pf_leftover.stdout | trim == 'present')
+         | ternary([{'level': 'WARN', 'msg': 'existing weka cluster containers on this node -- day-0 cleanup phase will refuse; tear down first'}],
+                   [{'level': 'PASS', 'msg': 'no conflicting weka containers'}])) }}

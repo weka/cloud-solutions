@@ -1,0 +1,48 @@
+---
+# weka_node role defaults.
+# Variable names deliberately reuse the weka_vars.yml contract so a
+# customer's existing vars file drives this path unmodified.
+
+# which role entrypoint to run (Phase 1: preflight only)
+weka_node_action: preflight
+
+# ---- carve (same names as weka_vars.yml) ----
+drive_cores: 1
+compute_cores: 1
+frontend_cores: 1
+drives_per_node: 0            # 0 = all instance-store NVMe
+drive_ram_per_core_gb: 2.5
+compute_ram_per_core_gb: 8
+frontend_ram_per_core_gb: 2.5
+
+# ---- management ENI position (must match the launch template) ----
+mgmt_network_card: 0
+mgmt_device_index: 0
+
+# ---- preflight thresholds (same semantics as weka-preflight.sh) ----
+weka_max_kernel: "6.8"        # highest kernel line the target WEKA version builds on
+min_phys_cores: 4             # carve total + 1 reserved for OS
+min_free_gb: 26               # free space needed on the /opt filesystem
+# data NICs required = carve total, derived below unless overridden
+min_data_nics: "{{ (drive_cores | int) + (compute_cores | int) + (frontend_cores | int) }}"
+
+# ---- install phase (same names as weka_vars.yml) ----
+weka_install_s3: ""           # s3://bucket/key of the WEKA tarball (instance-role download)
+weka_install_url: ""          # alternative: get.weka.io or presigned URL
+weka_opt_volume_gb: 0         # 'auto' | N | 0 = share root (volume must exist in the launch template)
+
+# ---- container ports (same names as weka_vars.yml semantics) ----
+base_port_drives: 14000
+base_port_compute: 14200
+base_port_frontend: 14400
+
+# ---- cluster orchestration (same names as weka_vars.yml) ----
+cluster_name: weka-cluster1
+aws_region: us-east-1
+stripe_data: 3
+stripe_protection: 2
+hot_spares: 1
+join_count: 5
+weka_user: admin
+weka_pass: admin
+rotate_admin_password: true

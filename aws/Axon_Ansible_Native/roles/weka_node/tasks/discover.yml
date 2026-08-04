@@ -1,0 +1,32 @@
+---
+# Runtime topology discovery: runs files/discover.sh (the validated bash,
+# verbatim) on the node and turns its JSON output into host facts. The
+# script keeps the /tmp/weka_topology.env cache, so repeat runs are instant
+# and the bash path sees identical topology.
+
+- name: "discover | run topology discovery"
+  ansible.builtin.script: discover.sh
+  environment:
+    DRIVE_CORES: "{{ drive_cores }}"
+    COMPUTE_CORES: "{{ compute_cores }}"
+    FRONTEND_CORES: "{{ frontend_cores }}"
+    DRIVES_PER_NODE: "{{ drives_per_node }}"
+    WEKA_CORE_IDS: "{{ weka_core_ids | default('') }}"
+    EXCLUDED_CORE_IDS: "{{ excluded_core_ids | default('') }}"
+    MGMT_NETWORK_CARD: "{{ mgmt_network_card }}"
+    MGMT_DEVICE_INDEX: "{{ mgmt_device_index }}"
+  register: discover_run
+  changed_when: false
+
+- name: "discover | parse topology facts"
+  ansible.builtin.set_fact:
+    weka_topology: "{{ discover_run.stdout_lines | last | from_json }}"
+
+- name: "discover | topology summary"
+  ansible.builtin.debug:
+    msg: >-
+      mgmt {{ weka_topology.mgmt_ip }} ({{ weka_topology.mgmt_nic }});
+      data gw {{ weka_topology.dp_gateway }}/{{ weka_topology.dp_netmask }};
+      cores D:{{ weka_topology.drive_core_ids }} C:{{ weka_topology.compute_core_ids }} F:{{ weka_topology.frontend_core_ids }};
+      drives {{ weka_topology.weka_drives | join(' ') }};
+      CpuSpecList {{ weka_topology.weka_cpuspec }}

@@ -1,0 +1,68 @@
+---
+# weka_vars.yml -- ALL customer-modifiable values, in one file.
+# Every playbook takes it the same way:
+#
+#   ansible-playbook -e @weka_vars.yml <playbook>.yml
+#
+# Values marked CHANGEME are required. Everything else has a sensible
+# default for a first deployment.
+
+# ---- identity ---------------------------------------------------------------
+cluster_name: "weka-cluster1"           # CHANGEME: also set it in inventory/weka_ec2.aws_ec2.yml
+                                        # and in the IAM policy tag conditions (three-way match)
+aws_region: "us-east-1"                 # CHANGEME: also in inventory + group_vars if you change it
+
+# ---- your environment -------------------------------------------------------
+# Used by scripts/generate-launch-template.sh and scripts/weka-env-preflight.sh
+# (exported into weka.conf form by those scripts' own config blocks, or set
+# the same values there directly).
+instance_type: "i3en.2xlarge"           # CHANGEME: any type with local NVMe + enough ENIs
+ami_id: ""                              # CHANGEME: kernel <= 6.8 for WEKA 4.4.x
+subnet_id: ""                           # CHANGEME
+sg_ena: ""                              # CHANGEME: self-referencing SG for mgmt + data
+sg_efa: ""                              # only on GPU/EFA platforms
+instance_profile_arn: ""                # CHANGEME
+
+# ---- transport --------------------------------------------------------------
+# S3 bucket the aws_ssm connection stages files through. The WEKA install
+# bucket works (operator + instance role both need it anyway).
+ssm_transfer_bucket: ""                 # CHANGEME
+
+# ---- WEKA install source ----------------------------------------------------
+weka_install_s3: ""                     # CHANGEME: s3://<bucket>/<weka-4.4.x tarball>
+weka_install_url: ""                    # alternative: get.weka.io or presigned URL
+
+# ---- cluster sizing ---------------------------------------------------------
+stripe_data: 3                          # DATA + PROTECTION must be <= node count
+stripe_protection: 2                    # (the deploy refuses otherwise)
+hot_spares: 1
+join_count: 5
+
+# ---- converged core carve (per node; drives the data-ENI count) --------------
+drive_cores: 1
+compute_cores: 1
+frontend_cores: 1
+drive_ram_per_core_gb: 2.5
+compute_ram_per_core_gb: 8
+frontend_ram_per_core_gb: 2.5
+
+# ---- resource allocation ----------------------------------------------------
+drives_per_node: 0                      # 0 = all instance-store NVMe; N = only N (NUMA-interleaved)
+weka_core_ids: ""                       # pin WEKA to exact cores (cpulist syntax); empty = auto
+excluded_core_ids: ""                   # cores WEKA must avoid (e.g. Slurm-owned)
+weka_opt_volume_gb: 0                   # 'auto' | N | 0 -- dedicated /opt/weka EBS volume
+                                        # (the volume itself comes from the launch template)
+
+# ---- management interface (must match the launch template) -------------------
+mgmt_network_card: 0
+mgmt_device_index: 0
+
+# ---- credentials ------------------------------------------------------------
+weka_user: admin
+weka_pass: admin                        # fresh-cluster default; rotated automatically at the end
+rotate_admin_password: true             # strong password generated + stored in Secrets Manager
+
+# ---- filesystem (fs.yml) ----------------------------------------------------
+weka_fs_name: default
+weka_fs_size_gb: 100
+weka_fs_mountpoint: /mnt/weka

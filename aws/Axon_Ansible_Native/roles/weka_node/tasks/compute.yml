@@ -1,0 +1,18 @@
+---
+# compute0 container -- joins the existing cluster (requires weka_join_ips,
+# supplied by the orchestration playbook after cluster create: Phase 4)
+
+- name: "compute | discover topology"
+  ansible.builtin.include_tasks: discover.yml
+
+- name: "compute | create compute0"
+  ansible.builtin.include_tasks: container.yml
+  vars:
+    c_name: compute0
+    c_flag: --only-compute-cores
+    c_port: "{{ base_port_compute }}"
+    c_cores: "{{ compute_cores }}"
+    c_core_ids: "{{ weka_topology.compute_core_ids }}"
+    c_mem_gb: "{{ (compute_cores | int * compute_ram_per_core_gb | float) | round(2) }}"
+    c_net_args: "{{ weka_topology.compute_net_args }}"
+    c_join: true

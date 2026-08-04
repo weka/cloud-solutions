@@ -1,0 +1,10 @@
+---
+# Local wipe of a REMOVED node: stop + delete all containers and the
+# topology cache so the node can be cleanly re-adopted later.
+
+- name: "drain_local | wipe local weka state"
+  ansible.builtin.shell: |
+    weka local stop -f || true
+    weka local rm --all -f || true
+    rm -f /tmp/weka_topology.env
+  changed_when: true

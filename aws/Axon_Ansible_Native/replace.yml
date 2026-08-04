@@ -1,0 +1,104 @@
+---
+# replace.yml -- replace a DEAD member (terminated/unreachable instance).
+#
+#   1. remove the dead instance from the inventory, add the replacement
+#   2. ansible-playbook -i <inv> -e confirm_dead_ip=<mgmt-ip-of-dead-node> replace.yml
+#
+# Auto-detects dead members (IPs in the cluster's backend table with no
+# matching inventory host) and requires confirm_dead_ip to match one of
+# them -- no accidental removals. Cluster-side cleanup only (the node is
+# gone), then the scale-out flow adopts the replacement. Health gates are
+# bypassed for the cleanup half (the cluster IS degraded); the final
+# rebalance wait still requires full protection at the end.
+
+- import_playbook: membership.yml
+
+- name: Detect and confirm the dead member
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "replace | compute dead member IPs (in cluster, not in inventory)"
+      run_once: true
+      ansible.builtin.set_fact:
+        inventory_ips: >-
+          {{ groups['weka_cluster'] | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list }}
+
+    - name: "replace | read cluster backend IPs"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.shell: |
+        weka cluster container -J | jq -r '.[] | select(.mode=="backend") | .ips[0]' | sort -u
+      register: cluster_ips
+      changed_when: false
+
+    - name: "replace | dead members"
+      run_once: true
+      ansible.builtin.set_fact:
+        dead_ips: "{{ cluster_ips.stdout_lines | difference(inventory_ips) }}"
+
+    - name: "replace | confirm"
+      run_once: true
+      ansible.builtin.assert:
+        that:
+          - confirm_dead_ip is defined
+          - confirm_dead_ip in dead_ips
+        fail_msg: >-
+          dead members detected: {{ dead_ips | join(', ') | default('none', true) }} --
+          pass -e confirm_dead_ip=<one of them> to proceed
+          (this permanently removes its containers and drives from the cluster)
+
+    - name: "replace | login (secret-first)"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.shell: |
+        set -e
+        CREDS=$(aws secretsmanager get-secret-value --region {{ aws_region }} \
+          --secret-id weka/{{ cluster_name }}/admin --query SecretString --output text 2>/dev/null) \
+          && weka user login "$(echo "$CREDS" | jq -r .username)" "$(echo "$CREDS" | jq -r .password)" \
+          || weka user login "{{ weka_user }}" "{{ weka_pass }}"
+      changed_when: false
+      no_log: true
+
+    - name: "replace | remove the dead node's drives + containers (cluster-side)"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.shell: |
+        set -e
+        IP="{{ confirm_dead_ip }}"
+        HOST="ip-$(echo "$IP" | tr . -)"
+        CIDS=$(weka cluster container -J | jq -r --arg ip "$IP" \
+          '.[] | select(.mode=="backend" and (.ips | index($ip))) | .host_id | capture("<(?<n>[0-9]+)>").n')
+        [ -n "$CIDS" ] || { echo "no containers found for $IP"; exit 1; }
+        # dead node: drives are DOWN -- no drain, deactivate + remove directly
+        DRIVE_IDS=$(weka cluster drive -J | jq -r --arg h "$HOST" \
+          '.[] | select(.hostname==$h) | .disk_id | capture("<(?<n>[0-9]+)>").n' | tr '\n' ' ')
+        DRIVE_UUIDS=$(weka cluster drive -J | jq -r --arg h "$HOST" \
+          '.[] | select(.hostname==$h) | .uuid' | tr '\n' ' ')
+        if [ -n "$(echo "$DRIVE_IDS" | tr -d ' ')" ]; then
+          weka cluster drive deactivate $DRIVE_IDS --force || true
+          sleep 5
+          weka cluster drive remove $DRIVE_UUIDS --force
+        fi
+        for C in $CIDS; do weka cluster container deactivate "$C" || true; done
+        sleep 10
+        for C in $CIDS; do
+          weka cluster container remove "$C" || weka cluster container remove "$C" --force \
+            || echo "WARN: remove of $C reported failure (may already be gone)"
+        done
+        LEFT=$(weka cluster container -J | jq --arg ip "$IP" '[.[] | select(.ips | index($ip))] | length')
+        [ "$LEFT" = "0" ] || { echo "ERROR: $LEFT container(s) still registered for $IP" >&2; exit 1; }
+        echo "dead node $IP removed from cluster"
+      register: dead_removal
+      changed_when: true
+
+    - name: "replace | removal log"
+      run_once: true
+      ansible.builtin.debug:
+        msg: "{{ dead_removal.stdout }}"
+
+# adopt the replacement: full scale-out flow with health gates bypassed
+# (the cluster is rebuilding); the post-adoption wait enforces full
+# protection at the end.
+- import_playbook: scale-out.yml
+  vars:
+    weka_skip_health_checks: true

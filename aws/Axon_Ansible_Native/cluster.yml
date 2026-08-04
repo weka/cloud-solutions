@@ -1,0 +1,239 @@
+---
+# cluster.yml -- day-0 WEKA cluster, end to end, over the native path.
+# Plays are the phase barriers; run_once + delegate_to the first sorted host
+# replaces the bash orchestrator election entirely.
+#
+#   ansible-playbook -e @weka_vars.yml cluster.yml
+#
+# Idempotent end to end: reruns skip agent install, containers, cluster
+# create, drive adds, start-io, and password rotation.
+
+# ---- phase: guards (fail fast, before any node work) ----
+- name: WEKA pre-flight guards
+  hosts: weka_cluster
+  gather_facts: false
+  tasks:
+    - name: "guard | stripe must fit the failure domains"
+      run_once: true
+      ansible.builtin.assert:
+        that: (stripe_data | int) + (stripe_protection | int) <= (groups['weka_cluster'] | length)
+        fail_msg: >-
+          stripe {{ stripe_data }}+{{ stripe_protection }} needs
+          {{ (stripe_data | int) + (stripe_protection | int) }} failure domains
+          but only {{ groups['weka_cluster'] | length }} nodes exist -- WEKA
+          would accept it and run permanently PARTIALLY_PROTECTED; refusing
+          before any node work.
+
+# ---- phase: install (deps, /opt/weka volume, agent) ----
+- name: WEKA install phase
+  hosts: weka_cluster
+  gather_facts: true
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: install
+
+# ---- phase: drives (cleanup, discovery, drives0 STEM) ----
+- name: WEKA drives phase
+  hosts: weka_cluster
+  gather_facts: true
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: drives
+
+# ---- phase: cluster create + protection (control-node orchestrated) ----
+- name: WEKA cluster create
+  hosts: weka_cluster
+  gather_facts: false
+  vars:
+    weka_primary: "{{ groups['weka_cluster'] | sort | first }}"
+    member_ids: "{{ groups['weka_cluster'] | sort }}"
+    member_ips: "{{ member_ids | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list }}"
+    member_names: "{{ member_ids | map('extract', hostvars, ['ansible_hostname']) | list }}"
+  tasks:
+    - name: "create | stripe must fit the failure domains"
+      run_once: true
+      ansible.builtin.assert:
+        that: (stripe_data | int) + (stripe_protection | int) <= (member_ids | length)
+        fail_msg: >-
+          stripe {{ stripe_data }}+{{ stripe_protection }} needs
+          {{ (stripe_data | int) + (stripe_protection | int) }} failure domains
+          but only {{ member_ids | length }} nodes exist -- WEKA would accept it
+          and run permanently PARTIALLY_PROTECTED; refusing instead.
+
+    - name: "create | check whether a cluster already exists"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.command: weka status
+      register: cluster_exists
+      changed_when: false
+      failed_when: false
+
+    - name: "create | weka cluster create"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      when: cluster_exists.rc != 0
+      ansible.builtin.command: >-
+        weka cluster create {{ member_names | join(' ') }}
+        --host-ips={{ member_ips | join(',') }}
+      changed_when: true
+
+    - name: "create | wait for cluster to settle"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      when: cluster_exists.rc != 0
+      ansible.builtin.command: weka status
+      register: settle
+      until: settle.rc == 0
+      retries: 10
+      delay: 5
+      changed_when: false
+
+    - name: "create | login (secret-first fallback)"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        set -e
+        weka user login "{{ weka_user }}" "{{ weka_pass }}" 2>/dev/null || {
+          CREDS=$(aws secretsmanager get-secret-value --region {{ aws_region }} \
+            --secret-id "{{ admin_secret_name | default('weka/' + cluster_name + '/admin') }}" \
+            --query SecretString --output text)
+          weka user login "$(echo "$CREDS" | jq -r .username)" "$(echo "$CREDS" | jq -r .password)"
+        }
+      changed_when: false
+      no_log: true
+
+    - name: "create | read current protection settings"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        weka status -J | jq -r '"\(.stripe_data_drives // 0) \(.stripe_protection_drives // 0) \(.hot_spare // 0)"'
+      register: stripe_now
+      changed_when: false
+
+    # idempotent: reruns after drives are added must not re-issue the update
+    - name: "create | apply protection + hot spares"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      when: stripe_now.stdout | trim != (stripe_data ~ ' ' ~ stripe_protection ~ ' ' ~ hot_spares)
+      ansible.builtin.shell: |
+        set -e
+        weka cluster update --data-drives {{ stripe_data }} \
+          --parity-drives {{ stripe_protection }} --cluster-name "{{ cluster_name }}"
+        weka cluster hot-spare {{ hot_spares }}
+      changed_when: true
+
+# ---- phase: compute + frontend containers (join the cluster) ----
+- name: WEKA compute phase
+  hosts: weka_cluster
+  gather_facts: false
+  vars:
+    weka_join_ips: >-
+      {{ groups['weka_cluster'] | sort
+         | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list
+         | batch(join_count | default(5) | int) | first | join(',') }}
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: compute
+
+- name: WEKA frontend phase
+  hosts: weka_cluster
+  gather_facts: false
+  vars:
+    weka_join_ips: >-
+      {{ groups['weka_cluster'] | sort
+         | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list
+         | batch(join_count | default(5) | int) | first | join(',') }}
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: frontend
+
+# ---- phase: drives into the cluster ----
+- name: WEKA adddrives phase
+  hosts: weka_cluster
+  gather_facts: false
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: adddrives
+
+# ---- phase: start-io + baseline + rotation + next steps ----
+- name: WEKA finalize
+  hosts: weka_cluster
+  gather_facts: false
+  vars:
+    weka_primary: "{{ groups['weka_cluster'] | sort | first }}"
+    secret_name: "{{ admin_secret_name | default('weka/' + cluster_name + '/admin') }}"
+  tasks:
+    - name: "finalize | check io status"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: weka status | grep -iq 'io status.*STARTED' && echo started || echo stopped
+      register: io_state
+      changed_when: false
+
+    - name: "finalize | start io"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      when: io_state.stdout | trim == 'stopped'
+      ansible.builtin.command: weka cluster start-io
+      changed_when: true
+
+    - name: "finalize | record baseline (scale-in floor)"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.command: >-
+        aws ssm put-parameter --region {{ aws_region }}
+        --name /weka/{{ cluster_name }}/baseline --type String --overwrite
+        --value '{"original_nodes":{{ groups['weka_cluster'] | length }},"data":{{ stripe_data }},"parity":{{ stripe_protection }},"hot_spares":{{ hot_spares }}}'
+      changed_when: true
+
+    - name: "finalize | check whether admin secret already exists (rotation is once)"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.command: >-
+        aws secretsmanager describe-secret --region {{ aws_region }} --secret-id {{ secret_name }}
+      register: secret_exists
+      changed_when: false
+      failed_when: false
+
+    - name: "finalize | rotate admin password into Secrets Manager (store-first)"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      when:
+        - rotate_admin_password | default(true) | bool
+        - secret_exists.rc != 0
+      ansible.builtin.shell: |
+        set -e
+        NEW_PASS="Wk$(openssl rand -hex 12)9x"
+        aws secretsmanager create-secret --region {{ aws_region }} --name "{{ secret_name }}" \
+          --secret-string "{\"username\":\"{{ weka_user }}\",\"password\":\"$NEW_PASS\"}" >/dev/null
+        weka user passwd "$NEW_PASS" --current-password "{{ weka_pass }}" >/dev/null
+        echo rotated
+      register: rotation
+      changed_when: "'rotated' in rotation.stdout"
+      no_log: true
+
+    - name: "finalize | cluster status"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.command: weka status
+      register: final_status
+      changed_when: false
+
+    - name: "finalize | report"
+      run_once: true
+      ansible.builtin.debug:
+        msg: |
+          {{ final_status.stdout }}
+
+          Next steps (from your workstation):
+            aws secretsmanager get-secret-value --region {{ aws_region }} \
+              --secret-id {{ secret_name }} --query SecretString --output text
+            aws ssm start-session --region {{ aws_region }} --target {{ weka_primary }} \
+              --document-name AWS-StartPortForwardingSession \
+              --parameters '{"portNumber":["14000"],"localPortNumber":["14000"]}'
+          Slurm CpuSpecList: {{ hostvars[weka_primary].weka_topology.weka_cpuspec }}

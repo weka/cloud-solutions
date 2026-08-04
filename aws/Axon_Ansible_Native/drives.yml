@@ -1,0 +1,12 @@
+---
+# drives.yml -- discovery + drives0 STEM container on every node (native).
+# compute/frontend containers are created by the Phase 4 orchestration
+# playbook after cluster create (they need --join-ips).
+
+- name: WEKA drives phase (native)
+  hosts: weka_cluster
+  gather_facts: true
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: drives
