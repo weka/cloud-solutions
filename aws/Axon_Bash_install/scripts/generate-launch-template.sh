@@ -55,6 +55,12 @@ WEKA_OPT_VOLUME_GB=0              # dedicated EBS volume for /opt/weka: 0 = shar
 USER_DATA_FILE=""                 # optional: shell script baked into the template as
                                   #   instance user data (e.g. scripts/userdata-el.sh --
                                   #   SSM agent + SELinux for RHEL-family AMIs)
+PLACEMENT_GROUP=""                # optional: name of an EXISTING placement group for the
+                                  #   backends (lower/more consistent inter-node latency).
+                                  #   empty = no placement group (default). NB: cluster-strategy
+                                  #   groups raise InsufficientInstanceCapacity odds on
+                                  #   large/scarce types; capacity blocks/ODCRs manage their own
+                                  #   placement and generally should NOT set this.
 LAUNCH_TEMPLATE_NAME=""           # empty = weka-<cluster>-<sanitized instance type>
 OUTPUT_DIR="."                    # where the JSON files are written
 CREATE_IN_AWS=false               # true: also run create-launch-template
@@ -153,7 +159,16 @@ if [ -n "$SG_EFA" ]; then
     --query 'SecurityGroups[0].IpPermissions' --output json) || die "describe-security-groups failed for ${SG_EFA}"
 fi
 
-export CAPS AMI_INFO SUBNET_INFO MGMT_SUBNET_INFO SG_EFA_RULES
+# optional placement group: must already exist (this script creates nothing)
+if [ -n "${PLACEMENT_GROUP:-}" ]; then
+  PG_STRATEGY=$(aws ec2 describe-placement-groups --region "$AWS_REGION" \
+    --group-names "$PLACEMENT_GROUP" --query 'PlacementGroups[0].Strategy' --output text 2>/dev/null) \
+    || die "placement group '$PLACEMENT_GROUP' not found in $AWS_REGION
+  fix: aws ec2 create-placement-group --region $AWS_REGION --group-name $PLACEMENT_GROUP --strategy cluster"
+  echo "   placement group: $PLACEMENT_GROUP (strategy: $PG_STRATEGY)"
+fi
+
+export CAPS AMI_INFO SUBNET_INFO MGMT_SUBNET_INFO SG_EFA_RULES PLACEMENT_GROUP
 export INSTANCE_TYPE AMI_ID SUBNET_ID MGMT_SUBNET_ID SG_ENA SG_EFA SG_MGMT INSTANCE_PROFILE_ARN CLUSTER_NAME
 export DRIVE_CORES COMPUTE_CORES FRONTEND_CORES EXPECTED_NODES
 export EFA_COUNT EFA_CARD_START ROOT_VOLUME_GB ROOT_VOLUME_TYPE WEKA_OPT_VOLUME_GB LAUNCH_TEMPLATE_NAME OUTPUT_DIR
@@ -368,6 +383,8 @@ lt_data = {
     "NetworkInterfaces": enis,
     "TagSpecifications": [tags("instance"), tags("network-interface"), tags("volume")],
 }
+if env.get("PLACEMENT_GROUP"):
+    lt_data["Placement"] = {"GroupName": env["PLACEMENT_GROUP"]}
 if env.get("USER_DATA_FILE"):
     import base64
     with open(env["USER_DATA_FILE"], "rb") as _f:

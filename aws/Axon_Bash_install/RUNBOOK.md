@@ -29,6 +29,8 @@ runtime on each node.
 | `install/weka-day2.sh` | Day-2 operations: scale-out / scale-in / replace / status |
 | `iam/instance-policy.json` | Instance-profile policy template (what the NODES may do) |
 | `iam/operator-policy.json` | Operator policy template (what YOU need to run this package) |
+| `ANSIBLE-RUNBOOK.md` | The Ansible-driven path through this package (automation-mandated environments) |
+| `ansible/` | Ansible entry point: `site.yml` (day 0) + `day2.yml` — see ANSIBLE-RUNBOOK.md |
 | `reference-launch-template-p6b300.json` | Reference: the full p6-b300.48xlarge template layout |
 
 Every script carries a `CUSTOMER CONFIGURATION` block at the top — all
@@ -69,7 +71,7 @@ expects — but bring-your-own is the primary path.)
      ENI attachments (same AWS account and same AZ required). Launch
      templates cannot span VPCs, so the instance launches into the
      management VPC and the generator emits `data-eni-plan.json`; deploy.sh
-     executes automatically post-launch (deploy.sh invokes it when a plan file exists)
+     and the Ansible playbook execute it automatically post-launch
      (`scripts/attach-data-enis.sh`, idempotent — scale-out/replacement
      nodes get their ENIs the same way). `SG_MGMT` is required (SG_ENA
      belongs to the data VPC). On GPU/EFA platforms the EFA interfaces stay
@@ -149,6 +151,12 @@ matching official WEKA sizing practice). The installer formats it XFS and
 mounts it before the agent installs, so WEKA's software, logs, and traces
 are isolated from the root filesystem; scale-out nodes inherit it
 automatically. Set `0` to share the root volume instead.
+`PLACEMENT_GROUP` (optional, default empty = disabled) launches backends
+into an **existing** placement group (typically `cluster` strategy, for
+lower/more consistent inter-node latency); if the group doesn't exist the
+generator fails with the exact `create-placement-group` fix command. Leave
+empty on capacity blocks / ODCRs, and weigh the higher
+`InsufficientInstanceCapacity` odds on large or scarce instance types.
 
 **`weka-ssm-install.sh`** (day-0) — cluster name, `EXPECTED_NODES`,
 stripe (`DATA`+`PROTECTION` ≤ node count; ≥5 hosts minimum for any cluster),
@@ -473,20 +481,6 @@ replacement and run `scale-out`. For already-terminated instances pass
 **Teardown / reinstall:** the installer refuses to run over an existing
 cluster. To rebuild from scratch, run on all nodes via SSM:
 `sudo weka local stop -f && sudo weka local rm --all -f`, then re-run day-0.
-
-**Full fleet teardown** (destroys the cluster and its artifacts):
-
-```bash
-# terminate every tagged instance
-aws ec2 terminate-instances --instance-ids $(aws ec2 describe-instances \
-  --filters "Name=tag:weka-cluster,Values=<CLUSTER_NAME>" \
-            "Name=instance-state-name,Values=running,stopped" \
-  --query 'Reservations[].Instances[].InstanceId' --output text)
-# remove the deployment artifacts
-aws ssm delete-parameter --name /weka/<CLUSTER_NAME>/baseline
-aws secretsmanager delete-secret --secret-id weka/<CLUSTER_NAME>/admin --force-delete-without-recovery
-aws ec2 delete-launch-template --launch-template-name <TEMPLATE_NAME>
-```
 
 ## 9. Support notes
 
