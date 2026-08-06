@@ -6,3 +6,4 @@ cluster-config*.json
 weka-pcluster-client-policy.json
 pcluster-weka-template.yaml
 .venv
+.DS_Store
