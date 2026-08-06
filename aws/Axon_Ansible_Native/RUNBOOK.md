@@ -130,6 +130,15 @@ RHEL-family AMIs — reference `scripts/userdata-el.sh` as `USER_DATA_FILE`
 so nodes bootstrap the SSM agent and set SELinux permissive at first boot
 (Ubuntu and Amazon Linux need no user data).
 
+**Placement group (optional).** Set `PLACEMENT_GROUP=<name>` to launch
+backends into an existing placement group (typically `cluster` strategy,
+for lower and more consistent inter-node latency). Empty (the default)
+means no placement group. The group must already exist — if it doesn't,
+the generator fails with the exact `create-placement-group` command to
+fix it. Leave this empty on capacity blocks / ODCRs (they manage their
+own placement) and weigh the higher `InsufficientInstanceCapacity` odds
+on large or scarce instance types.
+
 Launch your nodes from it:
 
 ```bash
