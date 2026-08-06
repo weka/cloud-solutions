@@ -167,6 +167,34 @@ root device.
   `${var//}` substitution), `ansible_aws_ssm_timeout: 900` (the 60s
   default drops hosts as UNREACHABLE mid-apt/mid-download)
 
+## trn1 heterogeneous probe (2026-08-05): partial — abandoned
+
+Goal: re-validate on a multi-network-card platform closer to p6 than i3en
+(trn1.32xlarge = 8 network cards, exposed device NUMA, EFA — the closest
+readily-launchable b200 analog). Fleet: 1× trn1 (6/6/3 per-host carve) +
+5× i3en.2xlarge (1/1/1).
+
+Proven before abandonment:
+- 24-ENI multi-card launch template (mgmt + 8 EFA + 15 data across 8
+  cards) launches and deploys cleanly
+- **NUMA-paired core↔NIC allocation ran LIVE on real exposed device
+  NUMA** — 15 same-NUMA pairs, interleaved across both sockets. This
+  closes the oldest open validation item (previously mock-only).
+- Heterogeneous per-host carve via inventory host vars deployed with
+  zero fatals; DPDK bound on all nodes including the trn1
+
+Unresolved (test abandoned — too many variables changing at once):
+start-io wedged in STARTING_NODES. The 30-io-node cluster sized 253
+buckets (vs 138 on all-i3en fleets); all six drives0 management (UDP)
+processes crash-looped cluster-wide with "General error" while every
+DPDK data process stayed up; wekanode RSS reached 2.9–3.5 GB against the
+2.5 GB drives-container budget, no kernel OOM. Working (unconfirmed)
+theory: drives-container memory must scale with cluster io-node/bucket
+count. Left behind in code: `cluster.yml` finalize now WAITS for cluster
+status OK after start-io (`io_settle_retries` × 20s, default 30) so a
+wedged start-io fails the deploy loudly instead of passing silently —
+this run is why.
+
 ## What remains before cutover (docs + packaging, no code)
 
 - ANSIBLE-RUNBOOK rewrite around the native flow

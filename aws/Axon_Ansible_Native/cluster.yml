@@ -182,6 +182,23 @@
       ansible.builtin.command: weka cluster start-io
       changed_when: true
 
+    # start-io returns immediately; the cluster then brings up io-nodes and
+    # buckets. Wait for it to actually settle — a cluster stuck in
+    # STARTING_NODES here (e.g. undersized drives-container memory on large
+    # io-node counts) must fail the deploy, not pass silently.
+    - name: "finalize | wait for io to settle (cluster status OK)"
+      run_once: true
+      delegate_to: "{{ weka_primary }}"
+      ansible.builtin.shell: |
+        set -eu
+        [ "$(weka status -J | jq -r '.status')" = "OK" ] || exit 1
+        echo settled
+      register: io_settled
+      changed_when: false
+      retries: "{{ io_settle_retries | default(30) }}"
+      delay: 20
+      until: io_settled.rc == 0
+
     - name: "finalize | record baseline (scale-in floor)"
       run_once: true
       delegate_to: "{{ weka_primary }}"
