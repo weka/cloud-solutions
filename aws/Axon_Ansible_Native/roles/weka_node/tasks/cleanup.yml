@@ -1,0 +1,28 @@
+---
+# Pre-container cleanup: a fresh agent install leaves a 'default' container
+# holding port 14000 -- remove all containers before creating the WEKA role
+# containers. Guard semantics improve on the bash phase: when drives0 already
+# exists (a rerun on a member/STEM node) cleanup is skipped entirely instead
+# of failing the run; container.yml then skips creation too.
+
+- name: "cleanup | check for existing drives0"
+  ansible.builtin.shell: weka local ps 2>/dev/null | awk '{print $1}' | grep -qx drives0
+  register: cleanup_drives0
+  changed_when: false
+  failed_when: false
+
+# keep-and-skip is only correct on cluster MEMBERS: a candidate's local
+# containers are orphans from a failed adoption and must be wiped so the
+# join can recreate them (observed live: STEM drives0 never registered).
+- name: "cleanup | drives0 present on a member -- skipping cleanup (rerun-safe)"
+  when: cleanup_drives0.rc == 0 and (is_member | default(true))
+  ansible.builtin.debug:
+    msg: existing drives0 container found on a member -- leaving containers untouched
+
+- name: "cleanup | remove default/orphaned containers"
+  when: cleanup_drives0.rc != 0 or not (is_member | default(true))
+  ansible.builtin.shell: |
+    weka local stop -f || true
+    weka local rm --all -f || true
+    rm -f /tmp/weka_topology.env
+  changed_when: true

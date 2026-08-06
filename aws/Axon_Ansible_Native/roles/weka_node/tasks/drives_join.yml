@@ -1,0 +1,20 @@
+---
+# drives0 container joining an EXISTING cluster (day-2 scale-out/replace)
+
+- name: "drives_join | cleanup default containers"
+  ansible.builtin.include_tasks: cleanup.yml
+
+- name: "drives_join | discover topology"
+  ansible.builtin.include_tasks: discover.yml
+
+- name: "drives_join | create drives0 (join)"
+  ansible.builtin.include_tasks: container.yml
+  vars:
+    c_name: drives0
+    c_flag: --only-drives-cores
+    c_port: "{{ base_port_drives }}"
+    c_cores: "{{ drive_cores }}"
+    c_core_ids: "{{ weka_topology.drive_core_ids }}"
+    c_mem_gb: "{{ (drive_cores | int * drive_ram_per_core_gb | float) | round(2) }}"
+    c_net_args: "{{ weka_topology.drive_net_args }}"
+    c_join: true

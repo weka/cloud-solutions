@@ -1,0 +1,124 @@
+---
+# Hardware checks: data-plane NICs, instance-store NVMe, physical cores,
+# memory vs carve, hugepage pre-reservations, /opt free space.
+# NB: on an active WEKA member, NICs/NVMe are DPDK-bound and invisible to
+# sysfs -- those checks downgrade to WARN (pf_weka_active).
+
+# ---------- 6. NIC layout ----------
+- name: "preflight | count ENA NICs"
+  ansible.builtin.shell: |
+    ENA=0
+    for d in /sys/class/net/*; do
+      n=$(basename "$d"); [ "$n" = lo ] && continue
+      [ -e "$d/device/driver" ] || continue
+      [ "$(basename "$(readlink -f "$d/device/driver")")" = "ena" ] && ENA=$((ENA+1))
+    done
+    echo "$ENA"
+    ls -d /sys/class/infiniband/* 2>/dev/null | wc -l
+  register: pf_nics
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check data-plane NIC count"
+  vars:
+    data_nics: "{{ (pf_nics.stdout_lines[0] | default(0) | int) - 1 }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results
+         + [ (data_nics | int >= min_data_nics | int)
+             | ternary({'level': 'PASS', 'msg': 'data-plane ENA NICs: ' ~ data_nics ~ ' >= ' ~ min_data_nics},
+               pf_weka_active
+               | ternary({'level': 'WARN', 'msg': 'data-plane NIC count not evaluable -- NICs are DPDK-bound by the running WEKA cluster'},
+                         {'level': 'FAIL', 'msg': 'only ' ~ data_nics ~ ' data-plane ENA NICs (need >= ' ~ min_data_nics ~ ') -- check launch template ENI layout'})) ]
+         + [ {'level': 'PASS', 'msg': 'EFA/RDMA devices visible: ' ~ (pf_nics.stdout_lines[1] | default(0) | trim) ~ ' (informational)'} ] }}
+
+# ---------- 7. instance-store NVMe ----------
+- name: "preflight | count instance-store NVMe"
+  ansible.builtin.shell: |
+    NVME=0
+    for c in /sys/class/nvme/nvme[0-9]*; do
+      [ -e "$c/model" ] || continue
+      grep -qi "Instance Storage" "$c/model" && NVME=$((NVME+1))
+    done
+    echo "$NVME"
+  register: pf_nvme
+  changed_when: false
+  failed_when: false
+
+- name: "preflight | check instance-store NVMe"
+  vars:
+    nvme: "{{ pf_nvme.stdout | trim | int }}"
+    min_nvme: "{{ (drives_per_node | int > 0) | ternary(drives_per_node | int, 1) }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (nvme | int >= min_nvme | int)
+         | ternary({'level': 'PASS', 'msg': 'instance-store NVMe drives: ' ~ nvme ~ ' >= ' ~ min_nvme ~ ' required'},
+           (nvme | int > 0)
+           | ternary({'level': 'FAIL', 'msg': 'only ' ~ nvme ~ ' instance-store NVMe drives but DRIVES_PER_NODE=' ~ min_nvme ~ ' configured'},
+             pf_weka_active
+             | ternary({'level': 'WARN', 'msg': 'instance-store NVMe not evaluable -- drives are DPDK-bound by the running WEKA cluster'},
+                       {'level': 'FAIL', 'msg': 'no instance-store NVMe found -- WEKA drives phase will fail'}))) ] }}
+
+# ---------- 8. cores / memory / hugepages ----------
+- name: "preflight | check physical cores"
+  vars:
+    phys: "{{ ansible_processor_cores | int * ansible_processor_count | int }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (phys | int >= min_phys_cores | int)
+         | ternary({'level': 'PASS', 'msg': 'physical cores: ' ~ phys ~ ' >= ' ~ min_phys_cores},
+                   {'level': 'FAIL', 'msg': 'only ' ~ phys ~ ' physical cores (need >= ' ~ min_phys_cores ~ ' for carve + OS core)'}) ] }}
+
+- name: "preflight | read MemAvailable + hugepages (exact, from /proc/meminfo)"
+  ansible.builtin.shell: |
+    awk '/^MemAvailable/{print "avail:" int($2/1024/1024)}
+         /^MemTotal/{print "total:" int($2/1024/1024)}
+         /^HugePages_Total/{print "hp:" $2}
+         /^Hugepagesize/{print "hpsz:" $2}' /proc/meminfo
+  register: pf_mem
+  changed_when: false
+
+- name: "preflight | check memory vs carve"
+  vars:
+    mem_avail: "{{ pf_mem.stdout_lines | select('match', '^avail:') | map('regex_replace', '^avail:', '') | first | int }}"
+    mem_total: "{{ pf_mem.stdout_lines | select('match', '^total:') | map('regex_replace', '^total:', '') | first | int }}"
+    carve_need: >-
+      {{ ((drive_cores | int * drive_ram_per_core_gb | float)
+          + (compute_cores | int * compute_ram_per_core_gb | float)
+          + (frontend_cores | int * frontend_ram_per_core_gb | float) + 2) | int }}
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (mem_avail | int >= carve_need | int + 8)
+         | ternary({'level': 'PASS', 'msg': 'memory: ' ~ mem_avail ~ ' GiB available >= ' ~ carve_need ~ ' GiB carve requirement + 8 GiB OS headroom (total ' ~ mem_total ~ ' GiB)'},
+           (mem_avail | int >= carve_need | int)
+           | ternary({'level': 'WARN', 'msg': 'memory tight: ' ~ mem_avail ~ ' GiB available vs ' ~ carve_need ~ ' GiB carve requirement -- little OS headroom'},
+                     {'level': 'FAIL', 'msg': 'insufficient memory: ' ~ mem_avail ~ ' GiB available < ' ~ carve_need ~ ' GiB required by the carve -- container setup will fail'})) ] }}
+
+- name: "preflight | check hugepage pre-reservations"
+  vars:
+    hp_total: "{{ pf_mem.stdout_lines | select('match', '^hp:') | map('regex_replace', '^hp:', '') | first | default(0) | int }}"
+    hp_kb: "{{ pf_mem.stdout_lines | select('match', '^hpsz:') | map('regex_replace', '^hpsz:', '') | first | default(0) | int }}"
+    hp_gb: "{{ ((hp_total | int) * (hp_kb | int) / 1024 / 1024) | int }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (hp_total | int > 0)
+         | ternary(pf_weka_active
+                   | ternary({'level': 'PASS', 'msg': 'hugepages present are WEKA''s own (cluster running on this node)'},
+                             {'level': 'WARN', 'msg': 'pre-reserved hugepages detected: ' ~ hp_total ~ ' pages (' ~ hp_gb ~ ' GiB) -- unavailable to WEKA and the OS. WEKA''s agent manages its OWN hugepages from container memory sizing; verify the reservation is intentional'}),
+                   {'level': 'PASS', 'msg': 'no conflicting pre-reserved hugepages (WEKA''s agent manages its own)'}) ] }}
+
+# ---------- 9. disk space for /opt ----------
+- name: "preflight | free space on /opt filesystem"
+  ansible.builtin.shell: |
+    df -BG --output=avail "$( [ -d /opt ] && echo /opt || echo / )" | tail -1 | tr -dc '0-9'
+  register: pf_disk
+  changed_when: false
+
+- name: "preflight | check /opt free space"
+  vars:
+    free_gb: "{{ pf_disk.stdout | trim | int }}"
+  ansible.builtin.set_fact:
+    pf_results: >-
+      {{ pf_results + [ (free_gb | int >= min_free_gb | int)
+         | ternary({'level': 'PASS', 'msg': 'free space on /opt fs: ' ~ free_gb ~ ' GiB >= ' ~ min_free_gb},
+                   {'level': 'FAIL', 'msg': 'only ' ~ free_gb ~ ' GiB free on /opt fs (need >= ' ~ min_free_gb ~ ' for WEKA install)'}) ] }}

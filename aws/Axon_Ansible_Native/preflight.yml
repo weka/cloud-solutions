@@ -1,0 +1,16 @@
+---
+# preflight.yml -- node conformance preflight over the native path.
+#
+#   ansible-playbook -e @weka_vars.yml preflight.yml
+#
+# Hosts come from the dynamic inventory (weka-cluster tag); the connection
+# is community.aws.aws_ssm (group_vars/all.yml) -- no SSH anywhere.
+# Gate: every node must report 0 fail.
+
+- name: WEKA node preflight (native)
+  hosts: weka_cluster
+  gather_facts: true
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: preflight

@@ -1,0 +1,75 @@
+---
+# Shared container-creation logic for drives0 / compute0 / frontend0.
+# Included with these vars set by the per-role entrypoints:
+#   c_name, c_flag, c_port, c_cores, c_core_ids, c_mem_gb, c_net_args,
+#   c_join (bool -- append --join-ips for cluster members)
+#
+# Idempotent: skipped when the container already exists (the structural
+# replacement for the bash path's hand-rolled cleanup guards).
+
+- name: "container | check whether {{ c_name }} already exists"
+  ansible.builtin.shell: weka local ps 2>/dev/null | awk '{print $1}' | grep -qx "{{ c_name }}"
+  register: c_exists
+  changed_when: false
+  failed_when: false
+
+- name: "container | {{ c_name }} already present, skipping"
+  when: c_exists.rc == 0
+  ansible.builtin.debug:
+    msg: "{{ c_name }} container already exists -- skipping setup"
+
+- name: "container | compose setup command"
+  when: c_exists.rc != 0
+  ansible.builtin.set_fact:
+    c_cmd: >-
+      weka local setup container --name {{ c_name }} {{ c_flag }}
+      --base-port {{ c_port }}
+      --cores {{ c_cores }} --core-ids {{ c_core_ids }}
+      --memory {{ c_mem_gb }}GB
+      --failure-domain {{ weka_topology.failure_domain }}
+      {% if c_join | default(false) %}--join-ips {{ weka_join_ips }}{% endif %}
+      {{ c_net_args }}
+      --management-ips {{ weka_topology.mgmt_ip }}
+
+- name: "container | create {{ c_name }}"
+  when: c_exists.rc != 0
+  ansible.builtin.command: "{{ c_cmd }}"
+  register: c_create
+  changed_when: true
+  failed_when: false
+
+# transient create failures happen (observed live: loop-device busy during
+# squashfs prepare on Rocky) -- clean the partial container and retry once
+- name: "container | retry create after transient failure"
+  when: c_exists.rc != 0 and c_create.rc != 0
+  ansible.builtin.shell: |
+    echo "first attempt failed: {{ c_create.stderr | default('') | regex_replace('\n', ' ') | truncate(160) }}"
+    weka local rm -f {{ c_name }} 2>/dev/null || true
+    sleep 10
+    {{ c_cmd }}
+  changed_when: true
+
+# post-create verification: 'weka local setup container' can return success
+# while the container crashes on startup (observed live: transient "unknown
+# failure" on a joining drives0). Verify Running; restart once; then hard-fail.
+- name: "container | verify {{ c_name }} is running"
+  ansible.builtin.shell: weka local ps 2>/dev/null | awk '$1=="{{ c_name }}" {print $2}'
+  register: c_state
+  until: c_state.stdout | trim == 'Running'
+  retries: 6
+  delay: 5
+  changed_when: false
+  failed_when: false
+
+- name: "container | restart {{ c_name }} once (transient startup failure)"
+  when: c_state.stdout | trim != 'Running'
+  ansible.builtin.command: weka local start {{ c_name }}
+  changed_when: true
+
+- name: "container | gate: {{ c_name }} must be running"
+  ansible.builtin.shell: weka local ps 2>/dev/null | awk '$1=="{{ c_name }}" {print $2}'
+  register: c_final
+  until: c_final.stdout | trim == 'Running'
+  retries: 6
+  delay: 5
+  changed_when: false

@@ -1,0 +1,79 @@
+---
+# Dedicated /opt/weka EBS volume: find the unused EBS data volume, format
+# XFS, mount at /opt/weka, persist with nofail -- BEFORE the weka agent
+# installs into /opt/weka. Skips cleanly (with a visible warning) when no
+# suitable volume exists, exactly like the bash installer.
+#
+# Only included when weka_opt_volume_gb is 'auto' or > 0 (see install.yml).
+
+- name: "opt_volume | already mounted?"
+  ansible.builtin.set_fact:
+    opt_weka_mounted: "{{ ansible_mounts | selectattr('mount', 'eq', '/opt/weka') | list | length > 0 }}"
+
+- name: "opt_volume | find the unused EBS volume (validated selection logic)"
+  when: not opt_weka_mounted
+  # kept as the validated shell: EBS model + unmounted + unpartitioned + no
+  # filesystem signature. Prints the device path or nothing.
+  ansible.builtin.shell: |
+    for D2 in /dev/nvme*n1; do
+      [ -b "$D2" ] || continue
+      grep -qi "Elastic Block Store" "/sys/class/nvme/$(basename "${D2%n1}")/model" 2>/dev/null || continue
+      [ -n "$(lsblk -no MOUNTPOINT "$D2" 2>/dev/null | tr -d '[:space:]')" ] && continue
+      [ "$(lsblk -n "$D2" | wc -l)" -gt 1 ] && continue
+      blkid "$D2" >/dev/null 2>&1 && continue
+      echo "$D2"; break
+    done
+  register: opt_dev_probe
+  changed_when: false
+
+- name: "opt_volume | warn when configured but no volume found"
+  when:
+    - not opt_weka_mounted
+    - opt_dev_probe.stdout | trim | length == 0
+  ansible.builtin.debug:
+    msg: >-
+      WARN: weka_opt_volume_gb={{ weka_opt_volume_gb }} configured but no
+      unused EBS volume found -- /opt/weka stays on the root filesystem
+
+- name: "opt_volume | format + mount + persist"
+  when:
+    - not opt_weka_mounted
+    - opt_dev_probe.stdout | trim | length > 0
+  vars:
+    opt_dev: "{{ opt_dev_probe.stdout | trim }}"
+  block:
+    - name: "opt_volume | ensure xfsprogs"
+      ansible.builtin.package:
+        name: xfsprogs
+      failed_when: false
+
+    - name: "opt_volume | mkfs.xfs (device is verified signature-free)"
+      ansible.builtin.command: mkfs.xfs -q {{ opt_dev }}
+
+    - name: "opt_volume | create mountpoint"
+      ansible.builtin.file:
+        path: /opt/weka
+        state: directory
+        mode: "0755"
+
+    - name: "opt_volume | read filesystem UUID"
+      ansible.builtin.command: blkid -s UUID -o value {{ opt_dev }}
+      register: opt_uuid
+      changed_when: false
+
+    - name: "opt_volume | persist in fstab (nofail)"
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "UUID={{ opt_uuid.stdout | trim }} /opt/weka xfs defaults,nofail 0 2"
+        regexp: '^\S+\s+/opt/weka\s'
+
+    - name: "opt_volume | mount"
+      ansible.builtin.command: mount /opt/weka
+      args:
+        creates: /opt/weka/.mounted-marker-never-exists
+      register: opt_mount
+      changed_when: opt_mount.rc == 0
+
+    - name: "opt_volume | report"
+      ansible.builtin.debug:
+        msg: "dedicated /opt/weka volume mounted: {{ opt_dev }}"

@@ -1,0 +1,13 @@
+---
+# install.yml -- WEKA install phase over the native path (build deps,
+# /opt/weka volume, agent install). Run preflight.yml first.
+#
+#   ansible-playbook -i <inventory> -e @weka_vars.yml install.yml
+
+- name: WEKA node install (native)
+  hosts: weka_cluster
+  gather_facts: true
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: install

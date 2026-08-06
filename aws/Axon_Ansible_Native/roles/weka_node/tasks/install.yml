@@ -1,0 +1,18 @@
+---
+# Install phase -- native port of the day-0 installer's 'install' node phase:
+#   1. build deps for the WEKA driver (headers, kernel-matched gcc, make, jq,
+#      awscli) with the EL vault and AWS CLI v2 bundle fallbacks
+#   2. dedicated /opt/weka EBS volume (find unused -> mkfs.xfs -> mount ->
+#      fstab nofail) BEFORE the agent installs into /opt/weka
+#   3. WEKA agent install (S3 via instance role preferred -> URL -> skip if
+#      the agent is already present)
+
+- name: "install | build dependencies"
+  ansible.builtin.include_tasks: install_deps.yml
+
+- name: "install | /opt/weka volume"
+  ansible.builtin.include_tasks: install_opt_volume.yml
+  when: weka_opt_volume_gb == 'auto' or (weka_opt_volume_gb | int > 0)
+
+- name: "install | weka agent"
+  ansible.builtin.include_tasks: install_weka.yml

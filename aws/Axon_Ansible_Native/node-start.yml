@@ -1,0 +1,27 @@
+---
+# node-start.yml -- bring a maintenance-stopped member back.
+#
+#   ansible-playbook -i <inv> -e weka_stop_target=<inventory-hostname> node-start.yml
+
+- name: Node maintenance start
+  hosts: "{{ weka_stop_target }}"
+  gather_facts: false
+  tasks:
+    - name: "node-start | start WEKA"
+      ansible.builtin.command: weka local start
+      changed_when: true
+
+    - name: "node-start | wait for cluster OK + fully protected"
+      ansible.builtin.shell: |
+        S=$(weka status -J)
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ] || exit 1
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ] || exit 1
+      register: backok
+      until: backok.rc == 0
+      retries: 90
+      delay: 20
+      changed_when: false
+
+    - name: "node-start | report"
+      ansible.builtin.debug:
+        msg: "{{ weka_stop_target }} back in service; cluster OK + fully protected"

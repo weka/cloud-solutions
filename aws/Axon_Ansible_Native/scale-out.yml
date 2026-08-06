@@ -1,0 +1,120 @@
+---
+# scale-out.yml -- adopt every tagged candidate (in inventory, not yet a
+# member). Health-gated; installs WEKA from the RUNNING cluster's dist
+# endpoint (version-matched even after manual upgrades). The primary is
+# always drawn from MEMBERS, so a candidate with the lowest instance-id can
+# never drive the operation (the bash election flaw, retired structurally).
+
+- import_playbook: membership.yml
+
+- name: Gate on cluster health before adopting
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "scale-out | cluster must be OK + fully protected"
+      run_once: true
+      when: not (weka_skip_health_checks | default(false) | bool)
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.shell: |
+        set -e
+        S=$(weka status -J)
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ]
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ]
+      changed_when: false
+
+    - name: "scale-out | nothing to adopt?"
+      run_once: true
+      when: groups['weka_candidates'] | default([]) | length == 0
+      ansible.builtin.debug:
+        msg: no candidates found -- every tagged inventory host is already a member
+
+# ---- per-candidate node phases (dist install, containers, drives) ----
+- name: Install WEKA on candidates (from the cluster dist endpoint)
+  hosts: weka_candidates
+  gather_facts: true
+  vars:
+    weka_dist_ip: "{{ hostvars[groups['weka_members'] | sort | first].weka_topology.mgmt_ip }}"
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: install
+
+- name: Candidate drives0 (join)
+  hosts: weka_candidates
+  gather_facts: false
+  vars:
+    weka_join_ips: >-
+      {{ groups['weka_members'] | sort
+         | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list
+         | batch(join_count | default(5) | int) | first | join(',') }}
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: drives_join
+
+- name: Candidate compute0
+  hosts: weka_candidates
+  gather_facts: false
+  vars:
+    weka_join_ips: >-
+      {{ groups['weka_members'] | sort
+         | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list
+         | batch(join_count | default(5) | int) | first | join(',') }}
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: compute
+
+- name: Candidate frontend0
+  hosts: weka_candidates
+  gather_facts: false
+  vars:
+    weka_join_ips: >-
+      {{ groups['weka_members'] | sort
+         | map('extract', hostvars, ['weka_topology', 'mgmt_ip']) | list
+         | batch(join_count | default(5) | int) | first | join(',') }}
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: frontend
+
+# ALL hosts, not just candidates: adddrives is idempotent (counts attached
+# drives), so this self-heals a partially-adopted node whose containers
+# joined but whose drives never landed (observed live).
+- name: Drives into the cluster (all nodes, self-healing)
+  hosts: weka_cluster
+  gather_facts: false
+  roles:
+    - role: weka_node
+      vars:
+        weka_node_action: adddrives
+
+# ---- wait for rebalance ----
+- name: Post scale-out
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "scale-out | wait for cluster OK + fully protected (rebalance)"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.shell: |
+        S=$(weka status -J)
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ] || exit 1
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ] || exit 1
+      register: rebal
+      until: rebal.rc == 0
+      retries: 90
+      delay: 20
+      changed_when: false
+
+    - name: "scale-out | final status"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      ansible.builtin.command: weka status
+      register: final
+      changed_when: false
+
+    - name: "scale-out | report"
+      run_once: true
+      ansible.builtin.debug:
+        msg: "{{ final.stdout }}"

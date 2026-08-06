@@ -1,0 +1,18 @@
+---
+# frontend0 container -- joins the existing cluster (requires weka_join_ips,
+# supplied by the orchestration playbook after cluster create: Phase 4)
+
+- name: "frontend | discover topology"
+  ansible.builtin.include_tasks: discover.yml
+
+- name: "frontend | create frontend0"
+  ansible.builtin.include_tasks: container.yml
+  vars:
+    c_name: frontend0
+    c_flag: --only-frontend-cores
+    c_port: "{{ base_port_frontend }}"
+    c_cores: "{{ frontend_cores }}"
+    c_core_ids: "{{ weka_topology.frontend_core_ids }}"
+    c_mem_gb: "{{ (frontend_cores | int * frontend_ram_per_core_gb | float) | round(2) }}"
+    c_net_args: "{{ weka_topology.frontend_net_args }}"
+    c_join: true

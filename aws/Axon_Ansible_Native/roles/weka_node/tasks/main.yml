@@ -1,0 +1,40 @@
+---
+# weka_node role dispatcher. Phase 1 implements preflight only; later
+# phases add install / drives / compute / frontend / day-2 entrypoints
+# following the same pattern.
+
+- name: "weka_node | preflight"
+  ansible.builtin.include_tasks: preflight.yml
+  when: weka_node_action == 'preflight'
+
+- name: "weka_node | install"
+  ansible.builtin.include_tasks: install.yml
+  when: weka_node_action == 'install'
+
+- name: "weka_node | discover"
+  ansible.builtin.include_tasks: discover.yml
+  when: weka_node_action == 'discover'
+
+- name: "weka_node | drives"
+  ansible.builtin.include_tasks: drives.yml
+  when: weka_node_action == 'drives'
+
+- name: "weka_node | compute"
+  ansible.builtin.include_tasks: compute.yml
+  when: weka_node_action == 'compute'
+
+- name: "weka_node | frontend"
+  ansible.builtin.include_tasks: frontend.yml
+  when: weka_node_action == 'frontend'
+
+- name: "weka_node | adddrives"
+  ansible.builtin.include_tasks: adddrives.yml
+  when: weka_node_action == 'adddrives'
+
+- name: "weka_node | drives_join"
+  ansible.builtin.include_tasks: drives_join.yml
+  when: weka_node_action == 'drives_join'
+
+- name: "weka_node | drain_local"
+  ansible.builtin.include_tasks: drain_local.yml
+  when: weka_node_action == 'drain_local'

@@ -1,0 +1,21 @@
+---
+# Dynamic inventory: cluster membership IS the weka-cluster tag (same
+# contract as the launch template tag). No static inventory files.
+#
+# CHANGEME (2 values): regions + the tag value filter. These are the only
+# per-deployment edits in this file; everything else comes from weka_vars.yml.
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1                       # CHANGEME: deployment region
+filters:
+  tag:weka-cluster: weka-cluster1   # CHANGEME: your CLUSTER_NAME
+  instance-state-name: running
+# group every matched instance under 'weka_cluster'
+groups:
+  weka_cluster: true
+# stable host naming by instance id; connection goes over SSM (no IP needed,
+# but expose the private IP as a hostvar for cluster-create later phases)
+hostnames:
+  - instance-id
+compose:
+  weka_mgmt_ip: private_ip_address

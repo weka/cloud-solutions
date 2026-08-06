@@ -1,0 +1,30 @@
+---
+# Transport: native Ansible over SSM -- preserves the no-SSH/no-inbound design.
+# UNVALIDATED until the Phase 0 spike runs (see README).
+ansible_connection: community.aws.aws_ssm
+ansible_aws_ssm_region: "{{ aws_region | default('us-east-1') }}"
+# The aws_ssm connection stages files through S3. The WEKA install bucket
+# qualifies (operator + instance role both already need it).
+# CHANGEME or pass via weka_vars.yml as ssm_transfer_bucket.
+ansible_aws_ssm_bucket_name: "{{ ssm_transfer_bucket | default('CHANGEME-bucket') }}"
+ansible_python_interpreter: auto_silent
+# node checks and installs run as root
+ansible_become: true
+ansible_become_method: sudo
+
+# ---- cluster-level defaults (visible to the role-less orchestration plays;
+# -e / weka_vars.yml override) ----
+cluster_name: weka-cluster1
+aws_region: us-east-1
+stripe_data: 3
+stripe_protection: 2
+hot_spares: 1
+join_count: 5
+weka_user: admin
+weka_pass: admin
+rotate_admin_password: true
+
+# aws_ssm per-command timeout: the 60s default is too tight for apt runs,
+# multi-GB tarball downloads, and driver builds (observed live: apt task
+# timeout -> host UNREACHABLE)
+ansible_aws_ssm_timeout: 900

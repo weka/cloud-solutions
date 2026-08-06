@@ -1,0 +1,82 @@
+---
+# Add this node's instance-store NVMe to the cluster. Runs on every node.
+# Credentials: secret-first (rerun-safe after rotation), configured
+# weka_user/weka_pass as the fallback -- the day-2 pattern.
+
+- name: "adddrives | discover topology"
+  ansible.builtin.include_tasks: discover.yml
+
+- name: "adddrives | login (secret-first, config fallback)"
+  ansible.builtin.shell: |
+    set -e
+    SECRET="{{ admin_secret_name | default('weka/' + cluster_name + '/admin') }}"
+    if CREDS=$(aws secretsmanager get-secret-value --region {{ aws_region }} \
+        --secret-id "$SECRET" --query SecretString --output text 2>/dev/null); then
+      USER=$(echo "$CREDS" | jq -r .username); PASS=$(echo "$CREDS" | jq -r .password)
+    else
+      USER="{{ weka_user }}"; PASS="{{ weka_pass }}"
+    fi
+    weka user login "$USER" "$PASS"
+  register: adddrives_login
+  changed_when: false
+  no_log: true
+
+- name: "adddrives | resolve own drives0 container id"
+  ansible.builtin.shell: |
+    set -e
+    weka cluster container -J | jq -r --arg ip "{{ weka_topology.mgmt_ip }}" \
+      '.[] | select(.container_name=="drives0" and (.ips | index($ip))) | .host_id' \
+      | grep -oE '[0-9]+' | head -1
+  register: drives0_cid
+  changed_when: false
+
+- name: "adddrives | gate: container id resolved"
+  ansible.builtin.assert:
+    that: drives0_cid.stdout | trim | length > 0
+    fail_msg: "could not resolve drives0 container id for {{ weka_topology.mgmt_ip }}"
+
+- name: "adddrives | count drives already attached to this container"
+  ansible.builtin.shell: |
+    weka cluster drive -J | jq --argjson cid {{ drives0_cid.stdout | trim }} \
+      '[.[] | select(.host_id == ("HostId<" + ($cid | tostring) + ">") or .host_id == $cid)] | length'
+  register: drives_attached
+  changed_when: false
+  failed_when: false
+
+- name: "adddrives | drives already added, skipping"
+  when: (drives_attached.stdout | default('0') | trim | int) >= (weka_topology.weka_drives | length)
+  ansible.builtin.debug:
+    msg: >-
+      {{ drives_attached.stdout | trim }} drive(s) already attached to
+      drives0 (host_id {{ drives0_cid.stdout | trim }}) -- skipping
+
+# per-drive adds, tolerant of a prior killed attempt that claimed a device
+# locally without registering it (observed live in the kill matrix: "Device
+# is already in use" for a drive the cluster table doesn't show)
+- name: "adddrives | add drives (per-drive, partial-attempt tolerant)"
+  when: (drives_attached.stdout | default('0') | trim | int) < (weka_topology.weka_drives | length)
+  ansible.builtin.shell: |
+    RC=0
+    for D in {{ weka_topology.weka_drives | join(' ') }}; do
+      OUT=$(weka cluster drive add {{ drives0_cid.stdout | trim }} "$D" --force 2>&1)
+      if [ $? -ne 0 ]; then
+        if echo "$OUT" | grep -qi "already in use\|already exist"; then
+          echo "tolerated $D: already claimed (prior attempt)"
+        else
+          echo "ERROR adding $D: $OUT"; RC=1
+        fi
+      else
+        echo "added $D"
+      fi
+    done
+    exit $RC
+  changed_when: true
+
+- name: "adddrives | verify registered drive count"
+  ansible.builtin.shell: |
+    weka cluster drive -J | jq --argjson cid {{ drives0_cid.stdout | trim }}       '[.[] | select(.host_id == ("HostId<" + ($cid | tostring) + ">") or .host_id == $cid)] | length'
+  register: drives_final
+  until: (drives_final.stdout | trim | int) >= (weka_topology.weka_drives | length)
+  retries: 9
+  delay: 10
+  changed_when: false

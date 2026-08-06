@@ -1,0 +1,48 @@
+---
+# healthcheck.yml -- read-only cluster health gates (OCI-repo parity):
+#   1. cluster status == OK
+#   2. fully protected (0-failure protection state at 100%)
+#   3. rebuild progress == 0%
+#   4. all drives ACTIVE
+#   5. hot spare >= 1
+# Standalone use OR imported by scale-in/node-stop as their gate.
+# Bypass (only when the target node IS the source of degradation):
+#   -e weka_skip_health_checks=true
+
+- import_playbook: membership.yml
+
+- name: WEKA cluster health gates
+  hosts: weka_members
+  gather_facts: false
+  tasks:
+    - name: "health | bypass requested"
+      run_once: true
+      when: weka_skip_health_checks | default(false) | bool
+      ansible.builtin.debug:
+        msg: "WARNING: bypassing all health gates (weka_skip_health_checks=true)"
+
+    - name: "health | run the 5 gates"
+      run_once: true
+      delegate_to: "{{ weka_vantage }}"
+      when: not (weka_skip_health_checks | default(false) | bool)
+      ansible.builtin.shell: |
+        set -e
+        S=$(weka status -J)
+        FAIL=""
+        [ "$(printf '%s' "$S" | jq -r '.status')" = "OK" ] || FAIL="$FAIL status-not-OK"
+        [ "$(printf '%s' "$S" | jq -r '[.rebuild.protectionState[] | select(.numFailures==0)][0].percent')" = "100" ] || FAIL="$FAIL not-fully-protected"
+        [ "$(printf '%s' "$S" | jq -r '.rebuild.progressPercent // 0')" = "0" ] || FAIL="$FAIL rebuild-in-progress"
+        NOTACTIVE=$(weka cluster drive -J | jq '[.[] | select(.status!="ACTIVE")] | length')
+        [ "$NOTACTIVE" = "0" ] || FAIL="$FAIL ${NOTACTIVE}-drives-not-ACTIVE"
+        HS=$(printf '%s' "$S" | jq -r '.hot_spare // 0')
+        [ "$HS" -ge 1 ] || FAIL="$FAIL hot-spare-lt-1"
+        if [ -n "$FAIL" ]; then echo "GATES FAILED:$FAIL"; exit 1; fi
+        echo "all 5 gates passed"
+      register: gates
+      changed_when: false
+
+    - name: "health | result"
+      run_once: true
+      when: not (weka_skip_health_checks | default(false) | bool)
+      ansible.builtin.debug:
+        msg: "{{ gates.stdout }}"
